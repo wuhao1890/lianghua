@@ -1,0 +1,18 @@
+USE `stock_trading`;
+
+ALTER TABLE `user` ADD COLUMN `role` VARCHAR(20) NOT NULL DEFAULT 'USER' COMMENT 'USER or ADMIN' AFTER `phone`;
+
+CREATE TABLE IF NOT EXISTS `recharge_order` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `user_id` BIGINT NOT NULL,
+    `amount` DECIMAL(18, 2) NOT NULL,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    `type` VARCHAR(20) NOT NULL DEFAULT 'WECHAT',
+    `operator_id` BIGINT DEFAULT NULL,
+    `remark` VARCHAR(500) DEFAULT NULL,
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
