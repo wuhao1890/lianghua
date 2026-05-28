@@ -17,9 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -43,13 +41,65 @@ public class SectorServiceImpl implements SectorService {
 
     @Override
     public List<SectorDTO> getAllSectors() {
+        // 获取所有板块
         List<SectorInfo> sectorList = sectorInfoMapper.selectList(
                 new LambdaQueryWrapper<SectorInfo>()
                         .orderByDesc(SectorInfo::getChangePercent));
 
+        if (sectorList.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 批量查询所有板块的成分股
+        List<String> sectorCodes = sectorList.stream()
+                .map(SectorInfo::getSectorCode)
+                .collect(Collectors.toList());
+
+        List<SectorStock> allStocks = sectorStockMapper.selectList(
+                new LambdaQueryWrapper<SectorStock>()
+                        .in(SectorStock::getSectorCode, sectorCodes));
+
+        // 按板块分组
+        Map<String, List<SectorStock>> stocksBySector = allStocks.stream()
+                .collect(Collectors.groupingBy(SectorStock::getSectorCode));
+
+        // 查询所有股票的最新行情
+        List<String> allStockCodes = allStocks.stream()
+                .map(SectorStock::getStockCode)
+                .distinct()
+                .collect(Collectors.toList());
+
+        List<StockInfo> stockInfos = allStockCodes.isEmpty() ? new ArrayList<>() :
+                stockInfoMapper.selectList(
+                        new LambdaQueryWrapper<StockInfo>()
+                                .in(StockInfo::getCode, allStockCodes));
+
+        Map<String, StockInfo> stockInfoMap = stockInfos.stream()
+                .collect(Collectors.toMap(StockInfo::getCode, si -> si, (a, b) -> a));
+
         List<SectorDTO> result = new ArrayList<>();
         for (SectorInfo sector : sectorList) {
             SectorDTO dto = convertToDTO(sector);
+
+            // 计算板块平均涨跌幅
+            List<SectorStock> sectorStocks = stocksBySector.getOrDefault(sector.getSectorCode(), new ArrayList<>());
+            BigDecimal totalChange = BigDecimal.ZERO;
+            int validCount = 0;
+
+            for (SectorStock ss : sectorStocks) {
+                StockInfo info = stockInfoMap.get(ss.getStockCode());
+                if (info != null && info.getChangePercent() != null) {
+                    totalChange = totalChange.add(info.getChangePercent());
+                    validCount++;
+                }
+            }
+
+            BigDecimal avgChange = null;
+            if (validCount > 0) {
+                avgChange = totalChange.divide(BigDecimal.valueOf(validCount), 4, RoundingMode.HALF_UP);
+            }
+            dto.setChangePercent(avgChange);
+            dto.setAvgChange(avgChange);
 
             // 获取龙头股的最新涨跌幅
             if (sector.getLeaderStock() != null && !sector.getLeaderStock().isEmpty()) {
@@ -61,6 +111,14 @@ public class SectorServiceImpl implements SectorService {
 
             result.add(dto);
         }
+
+        // 按涨跌幅降序排序
+        result.sort((a, b) -> {
+            BigDecimal ca = a.getChangePercent() != null ? a.getChangePercent() : BigDecimal.ZERO;
+            BigDecimal cb = b.getChangePercent() != null ? b.getChangePercent() : BigDecimal.ZERO;
+            return cb.compareTo(ca);
+        });
+
         return result;
     }
 
@@ -76,6 +134,39 @@ public class SectorServiceImpl implements SectorService {
         }
 
         SectorDTO dto = convertToDTO(sector);
+
+        // 查询板块成分股并计算平均涨跌幅
+        List<SectorStock> sectorStocks = sectorStockMapper.selectList(
+                new LambdaQueryWrapper<SectorStock>()
+                        .eq(SectorStock::getSectorCode, sectorCode));
+
+        if (!sectorStocks.isEmpty()) {
+            List<String> stockCodes = sectorStocks.stream()
+                    .map(SectorStock::getStockCode)
+                    .collect(Collectors.toList());
+
+            List<StockInfo> stockInfos = stockInfoMapper.selectList(
+                    new LambdaQueryWrapper<StockInfo>()
+                            .in(StockInfo::getCode, stockCodes));
+
+            Map<String, StockInfo> stockInfoMap = stockInfos.stream()
+                    .collect(Collectors.toMap(StockInfo::getCode, si -> si, (a, b) -> a));
+
+            BigDecimal totalChange = BigDecimal.ZERO;
+            int validCount = 0;
+            for (SectorStock ss : sectorStocks) {
+                StockInfo info = stockInfoMap.get(ss.getStockCode());
+                if (info != null && info.getChangePercent() != null) {
+                    totalChange = totalChange.add(info.getChangePercent());
+                    validCount++;
+                }
+            }
+            if (validCount > 0) {
+                BigDecimal avg = totalChange.divide(BigDecimal.valueOf(validCount), 4, RoundingMode.HALF_UP);
+                dto.setChangePercent(avg);
+                dto.setAvgChange(avg);
+            }
+        }
 
         // 获取龙头股行情
         if (sector.getLeaderStock() != null && !sector.getLeaderStock().isEmpty()) {

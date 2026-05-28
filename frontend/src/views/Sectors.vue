@@ -31,8 +31,6 @@
           v-for="(sector, idx) in aiAnalysis.topSectors"
           :key="sector.sectorCode"
           class="ai-sector-card"
-          :class="{ expanded: expandedAiCard === idx }"
-          @click="toggleAiCard(idx)"
         >
           <div class="ai-card-header">
             <span class="ai-rank">{{ idx + 1 }}</span>
@@ -48,8 +46,8 @@
           </div>
           <p class="ai-reason">{{ sector.aiReason }}</p>
 
-          <!-- 展开的龙头股列表 -->
-          <div v-if="expandedAiCard === idx" class="ai-leader-list" @click.stop>
+          <!-- 龙头股列表（始终展开） -->
+          <div class="ai-leader-list">
             <div class="leader-header">龙头股分析</div>
             <div
               v-for="stock in sector.leaderStocks"
@@ -75,11 +73,6 @@
               </div>
               <p class="leader-reason">{{ stock.aiReason }}</p>
             </div>
-          </div>
-
-          <div v-if="expandedAiCard !== idx" class="expand-hint">
-            <el-icon><ArrowDown /></el-icon>
-            <span>查看龙头股</span>
           </div>
         </div>
       </div>
@@ -250,7 +243,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Refresh, TrendCharts, ArrowDown, Loading, Search } from '@element-plus/icons-vue'
+import { Refresh, TrendCharts, Loading, Search } from '@element-plus/icons-vue'
 import {
   getAllSectors,
   aiAnalyzeSectors,
@@ -271,7 +264,6 @@ const aiLoading = ref(false)
 const sectors = ref<SectorInfo[]>([])
 const aiAnalysis = ref<AiSectorAnalysis | null>(null)
 const searchQuery = ref('')
-const expandedAiCard = ref<number | null>(null)
 
 // 对话框
 const dialogVisible = ref(false)
@@ -304,11 +296,6 @@ function formatMarketCap(cap: number | null): string {
   if (cap >= 100000000) return (cap / 100000000).toFixed(2) + '亿'
   if (cap >= 10000) return (cap / 10000).toFixed(2) + '万'
   return cap.toFixed(2)
-}
-
-/** 展开/收起AI卡片 */
-function toggleAiCard(idx: number) {
-  expandedAiCard.value = expandedAiCard.value === idx ? null : idx
 }
 
 /** 跳转到股票详情 */
@@ -347,7 +334,6 @@ async function loadSectors() {
 /** 触发AI分析 */
 async function triggerAiAnalysis() {
   aiLoading.value = true
-  expandedAiCard.value = null
   try {
     const res = await aiAnalyzeSectors()
     aiAnalysis.value = res.data?.data || null
@@ -525,17 +511,6 @@ onMounted(async () => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.expand-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  font-size: 11px;
-  color: #909399;
-  padding-top: 6px;
-  border-top: 1px solid #f0f7f2;
 }
 
 /* AI 龙头股列表 */

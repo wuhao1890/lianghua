@@ -41,6 +41,30 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '板块', icon: 'Grid' }
       },
       {
+        path: 'a-stocks',
+        name: 'AStocks',
+        component: () => import('@/views/AStocks.vue'),
+        meta: { title: 'A股行情', icon: 'DataLine' }
+      },
+      {
+        path: 'us-stocks',
+        name: 'UsStocks',
+        component: () => import('@/views/UsStocks.vue'),
+        meta: { title: '美股行情', icon: 'DataLine' }
+      },
+      {
+        path: 'gold',
+        name: 'Gold',
+        component: () => import('@/views/Gold.vue'),
+        meta: { title: '黄金', icon: 'Coin' }
+      },
+      {
+        path: 'funds',
+        name: 'Funds',
+        component: () => import('@/views/Funds.vue'),
+        meta: { title: '基金', icon: 'DataBoard' }
+      },
+      {
         path: 'stock/:code',
         name: 'StockDetail',
         component: () => import('@/views/StockDetail.vue'),

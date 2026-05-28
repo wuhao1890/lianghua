@@ -22,17 +22,33 @@
           <el-icon><Odometer /></el-icon>
           <template #title>仪表盘</template>
         </el-menu-item>
-        <el-menu-item index="/market">
-          <el-icon><TrendCharts /></el-icon>
-          <template #title>行情中心</template>
-        </el-menu-item>
-        <el-menu-item index="/indices">
+
+        <!-- 股票子菜单 -->
+        <el-sub-menu index="stocks">
+          <template #title>
+            <el-icon><TrendCharts /></el-icon>
+            <span>股票</span>
+          </template>
+          <el-menu-item index="/market">行情中心</el-menu-item>
+          <el-menu-item index="/indices">大盘指数</el-menu-item>
+          <el-menu-item index="/sectors">板块</el-menu-item>
+        </el-sub-menu>
+
+        <el-menu-item index="/a-stocks">
           <el-icon><DataLine /></el-icon>
-          <template #title>大盘指数</template>
+          <template #title>A股行情</template>
         </el-menu-item>
-        <el-menu-item index="/sectors">
-          <el-icon><Grid /></el-icon>
-          <template #title>板块</template>
+        <el-menu-item index="/us-stocks">
+          <el-icon><DataLine /></el-icon>
+          <template #title>美股行情</template>
+        </el-menu-item>
+        <el-menu-item index="/gold">
+          <el-icon><Coin /></el-icon>
+          <template #title>黄金</template>
+        </el-menu-item>
+        <el-menu-item index="/funds">
+          <el-icon><DataBoard /></el-icon>
+          <template #title>基金</template>
         </el-menu-item>
         <el-menu-item index="/trade">
           <el-icon><Money /></el-icon>
@@ -118,7 +134,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Monitor, Grid } from '@element-plus/icons-vue'
+import { Monitor, Grid, Coin, DataBoard } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 
 const route = useRoute()
@@ -229,6 +245,50 @@ function handleCommand(command: string) {
     &:hover {
       background-color: rgba(51, 214, 133, 0.1) !important;
       color: #6aed9a !important;
+    }
+  }
+
+  :deep(.el-sub-menu) {
+    .el-sub-menu__title {
+      height: 48px;
+      line-height: 48px;
+      margin: 2px 8px;
+      border-radius: 6px;
+      width: calc(100% - 16px);
+      color: #b8dcc6;
+
+      &:hover {
+        background-color: rgba(51, 214, 133, 0.1) !important;
+        color: #6aed9a !important;
+      }
+
+      .el-icon {
+        color: #b8dcc6;
+      }
+    }
+
+    .el-menu {
+      background-color: transparent;
+
+      .el-menu-item {
+        padding-left: 56px !important;
+        font-size: 13px;
+        height: 42px;
+        line-height: 42px;
+        margin: 1px 8px;
+
+        &.is-active {
+          background: linear-gradient(135deg, rgba(51, 214, 133, 0.2), rgba(51, 214, 133, 0.08)) !important;
+          color: #33d685 !important;
+        }
+      }
+    }
+
+    &.is-opened {
+      .el-sub-menu__title {
+        color: #33d685;
+        .el-icon { color: #33d685; }
+      }
     }
   }
 }

@@ -1,0 +1,64 @@
+package com.stock.stock.controller;
+
+import com.stock.stock.dto.FundInfoDTO;
+import com.stock.stock.service.FundService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/stock/fund")
+public class FundController {
+
+    @Autowired
+    private FundService fundService;
+
+    /**
+     * 获取基金列表
+     * GET /api/stock/fund/list
+     */
+    @GetMapping("/list")
+    public ResponseEntity<Map<String, Object>> getFundList() {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<FundInfoDTO> list = fundService.getFundList();
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", list);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 获取基金详情
+     * GET /api/stock/fund/{code}
+     */
+    @GetMapping("/{code}")
+    public ResponseEntity<Map<String, Object>> getFundDetail(@PathVariable String code) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            FundInfoDTO dto = fundService.getFundDetail(code);
+            if (dto == null) {
+                result.put("code", 404);
+                result.put("message", "基金不存在");
+                return ResponseEntity.ok(result);
+            }
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", dto);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
+}
