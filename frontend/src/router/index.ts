@@ -71,6 +71,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '股票详情', icon: 'Document', hidden: true }
       },
       {
+        path: 'fund/:code',
+        name: 'FundDetail',
+        component: () => import('@/views/FundDetail.vue'),
+        meta: { title: '基金详情', hidden: true }
+      },
+      {
         path: 'trade',
         name: 'Trade',
         component: () => import('@/views/Trade.vue'),

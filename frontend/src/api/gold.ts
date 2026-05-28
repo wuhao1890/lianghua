@@ -9,10 +9,29 @@ export interface GoldQuote {
   tradeDate: string
 }
 
-export function getGoldLatest() {
-  return request.get('/stock/gold/latest')
+export interface GoldProduct {
+  [code: string]: string
 }
 
-export function getGoldHistory(days: number = 30) {
-  return request.get('/stock/gold/history', { params: { days } })
+export interface GoldPriceDTO {
+  price: number
+  changePercent: number
+  high: number
+  low: number
+  openPrice: number
+  tradeDate: string
+  productCode: string
+  productName: string
+}
+
+export function getGoldProducts() {
+  return request.get('/stock/gold/products')
+}
+
+export function getGoldLatest(code: string = 'hf_GC') {
+  return request.get('/stock/gold/latest', { params: { code } })
+}
+
+export function getGoldHistory(code: string = 'hf_GC', days: number = 30) {
+  return request.get('/stock/gold/history', { params: { code, days } })
 }

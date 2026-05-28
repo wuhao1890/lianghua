@@ -21,7 +21,7 @@
         <div class="summary-divider" />
         <div class="filter-item">
           <span class="filter-label">基金类型：</span>
-          <el-select v-model="selectedType" placeholder="全部类型" size="default" clearable style="width: 160px" @change="loadData">
+          <el-select v-model="selectedType" placeholder="全部类型" size="default" clearable style="width: 160px" @change="onFilterChange">
             <el-option
               v-for="item in fundTypeOptions"
               :key="item.value"
@@ -29,6 +29,21 @@
               :value="item.value"
             />
           </el-select>
+        </div>
+        <div class="filter-item search-item">
+          <el-input
+            v-model="keyword"
+            placeholder="搜索基金名称/代码"
+            clearable
+            style="width: 220px"
+            size="default"
+            @clear="onFilterChange"
+            @keyup.enter="onFilterChange"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
         </div>
       </div>
     </el-card>
@@ -50,7 +65,7 @@
             <span class="fund-name">{{ row.name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="nav" label="单位净值" width="120" align="right">
+        <el-table-column prop="nav" label="单位净值(实时)" width="140" align="right">
           <template #default="{ row }">
             <span style="font-weight: 600">
               {{ formatPrice(row.nav) }}
@@ -82,6 +97,20 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 分页 -->
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 30, 50, 100]"
+          :total="totalCount"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @size-change="onPageChange"
+          @current-change="onPageChange"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -89,7 +118,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Refresh, DataBoard } from '@element-plus/icons-vue'
+import { Refresh, DataBoard, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { getFundList } from '@/api/fund'
 import type { FundInfo } from '@/api/fund'
@@ -101,17 +130,18 @@ const loading = ref(false)
 const fundList = ref<FundInfo[]>([])
 const totalCount = ref(0)
 const selectedType = ref('')
+const keyword = ref('')
+const currentPage = ref(1)
+const pageSize = ref(30)
 
 const fundTypeOptions = [
-  { value: '', label: '全部类型' },
+  { value: '', label: '全部' },
   { value: '股票型', label: '股票型' },
   { value: '混合型', label: '混合型' },
   { value: '债券型', label: '债券型' },
   { value: '货币型', label: '货币型' },
   { value: '指数型', label: '指数型' },
-  { value: 'QDII', label: 'QDII' },
-  { value: 'FOF', label: 'FOF' },
-  { value: '其他', label: '其他' }
+  { value: 'QDII', label: 'QDII' }
 ]
 
 function safeScore(val: any): number {
@@ -126,9 +156,7 @@ function getFundTypeTagType(fundType: string): string {
     '债券型': 'success',
     '货币型': 'primary',
     '指数型': '',
-    'QDII': 'info',
-    'FOF': 'info',
-    '其他': ''
+    'QDII': 'info'
   }
   return map[fundType] || ''
 }
@@ -136,19 +164,37 @@ function getFundTypeTagType(fundType: string): string {
 async function loadData() {
   loading.value = true
   try {
-    const res = await getFundList()
-    let list = res.data?.data?.list || res.data?.data || []
-    if (!Array.isArray(list)) {
-      list = []
+    const params: any = {
+      page: currentPage.value,
+      pageSize: pageSize.value
     }
-
-    // 按基金类型过滤
     if (selectedType.value) {
-      list = list.filter((item: FundInfo) => item.fundType === selectedType.value)
+      params.fundType = selectedType.value
+    }
+    if (keyword.value) {
+      params.keyword = keyword.value
     }
 
-    fundList.value = list
-    totalCount.value = list.length
+    const res = await getFundList(params)
+    const data = res.data?.data
+    if (data) {
+      if (Array.isArray(data.list)) {
+        fundList.value = data.list
+      } else if (Array.isArray(data.records)) {
+        fundList.value = data.records
+      } else if (Array.isArray(data)) {
+        fundList.value = data
+      } else {
+        fundList.value = []
+      }
+      totalCount.value = data.total || data.totalCount || fundList.value.length
+    } else if (Array.isArray(res.data)) {
+      fundList.value = res.data
+      totalCount.value = fundList.value.length
+    } else {
+      fundList.value = []
+      totalCount.value = 0
+    }
   } catch (e: any) {
     ElMessage.error(e.message || '加载基金数据失败')
     fundList.value = []
@@ -158,9 +204,17 @@ async function loadData() {
   }
 }
 
+function onFilterChange() {
+  currentPage.value = 1
+  loadData()
+}
+
+function onPageChange() {
+  loadData()
+}
+
 function goToDetail(row: FundInfo) {
-  // 可导航至基金详情页（如果后续实现）
-  ElMessage.info(`基金代码: ${row.code} - ${row.name}`)
+  router.push({ name: 'FundDetail', params: { code: row.code } })
 }
 
 onMounted(() => {
@@ -205,6 +259,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 20px;
+  flex-wrap: wrap;
 }
 
 .summary-item {
@@ -240,6 +295,10 @@ onMounted(() => {
     color: #909399;
     white-space: nowrap;
   }
+}
+
+.search-item {
+  margin-left: auto;
 }
 
 .funds-card {
@@ -287,5 +346,13 @@ onMounted(() => {
 .date-text {
   font-size: 13px;
   color: #606266;
+}
+
+.pagination-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #ebeef5;
 }
 </style>

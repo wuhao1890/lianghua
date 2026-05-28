@@ -18,17 +18,21 @@ public class FundController {
     private FundService fundService;
 
     /**
-     * 获取基金列表
-     * GET /api/stock/fund/list
+     * 获取基金列表（分页、搜索、类型筛选）
+     * GET /api/stock/fund/list?keyword=&fundType=&page=1&pageSize=30
      */
     @GetMapping("/list")
-    public ResponseEntity<Map<String, Object>> getFundList() {
+    public ResponseEntity<Map<String, Object>> getFundList(
+            @RequestParam(required = false, defaultValue = "") String keyword,
+            @RequestParam(required = false, defaultValue = "") String fundType,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "30") int pageSize) {
         Map<String, Object> result = new HashMap<>();
         try {
-            List<FundInfoDTO> list = fundService.getFundList();
+            Map<String, Object> data = fundService.getFundList(keyword, fundType, page, pageSize);
             result.put("code", 200);
             result.put("message", "查询成功");
-            result.put("data", list);
+            result.put("data", data);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             result.put("code", 500);
@@ -54,6 +58,28 @@ public class FundController {
             result.put("code", 200);
             result.put("message", "查询成功");
             result.put("data", dto);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 获取基金净值历史
+     * GET /api/stock/fund/{code}/nav?days=30
+     */
+    @GetMapping("/{code}/nav")
+    public ResponseEntity<Map<String, Object>> getFundNavHistory(
+            @PathVariable String code,
+            @RequestParam(defaultValue = "30") int days) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<FundInfoDTO> list = fundService.getFundNavHistory(code, days);
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", list);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             result.put("code", 500);
