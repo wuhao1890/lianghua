@@ -1,0 +1,122 @@
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import type { Position, TradeOrder, AccountOverview, ProfitAnalysis, ProfitRecord, BuyRequest, SellRequest } from '@/types'
+import { buy as buyApi, sell as sellApi, getPositions as getPositionsApi, getOrders as getOrdersApi, cancelOrder as cancelOrderApi, getAccountOverview as getOverviewApi, getProfitAnalysis as getProfitApi, getProfitRecords } from '@/api/trade'
+
+export const useTradeStore = defineStore('trade', () => {
+  const positions = ref<Position[]>([])
+  const orders = ref<TradeOrder[]>([])
+  const accountOverview = ref<AccountOverview | null>(null)
+  const profitAnalysis = ref<ProfitAnalysis | null>(null)
+  const profitRecords = ref<ProfitRecord[]>([])
+  const loading = ref(false)
+  const total = ref(0)
+
+  async function buy(data: BuyRequest) {
+    const res = await buyApi(data)
+    return res.data.data
+  }
+
+  async function sell(data: SellRequest) {
+    const res = await sellApi(data)
+    return res.data.data
+  }
+
+  async function getPositions() {
+    loading.value = true
+    try {
+      const res = await getPositionsApi()
+      // 后端字段映射到前端字段
+      positions.value = (res.data.data || []).map((p: any) => ({
+        id: p.id,
+        userId: p.userId,
+        stockCode: p.stockCode,
+        stockName: p.stockName || p.stockCode, // 兼容
+        market: p.market === 'A_STOCK' ? 'A' : 'US',
+        quantity: p.quantity,
+        availableQuantity: p.quantity, // 默认全部可卖
+        costPrice: p.avgCost || 0, // avgCost -> costPrice
+        currentPrice: p.currentPrice,
+        marketValue: p.marketValue || p.currentPrice * p.quantity,
+        profit: p.profitLoss || 0, // profitLoss -> profit
+        profitPercent: p.profitLossPercent || 0, // profitLossPercent -> profitPercent
+        todayProfit: 0, // 暂无今日数据
+        todayProfitPercent: 0
+      }))
+    } catch (error) {
+      positions.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function getOrders(params: { page: number; pageSize: number; direction?: string; status?: string; startDate?: string; endDate?: string }) {
+    loading.value = true
+    try {
+      const res = await getOrdersApi(params)
+      orders.value = res.data.data?.list || []
+      total.value = res.data.data?.total || 0
+    } catch (error) {
+      orders.value = []
+      total.value = 0
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function cancelOrder(orderId: number) {
+    const res = await cancelOrderApi(orderId)
+    return res.data.data
+  }
+
+  async function getAccountOverview() {
+    try {
+      const res = await getOverviewApi()
+      accountOverview.value = res.data.data
+      return res.data.data
+    } catch (error) {
+      accountOverview.value = null
+      return null
+    }
+  }
+
+  async function getProfitAnalysis() {
+    try {
+      const res = await getProfitApi()
+      profitAnalysis.value = res.data.data
+      return res.data.data
+    } catch (error) {
+      profitAnalysis.value = null
+      return null
+    }
+  }
+
+  async function fetchProfitRecords(range: string = '1m') {
+    try {
+      const res = await getProfitRecords(range)
+      profitRecords.value = res.data.data || []
+      return res.data.data
+    } catch (error) {
+      profitRecords.value = []
+      return []
+    }
+  }
+
+  return {
+    positions,
+    orders,
+    accountOverview,
+    profitAnalysis,
+    profitRecords,
+    loading,
+    total,
+    buy,
+    sell,
+    getPositions,
+    getOrders,
+    cancelOrder,
+    getAccountOverview,
+    getProfitAnalysis,
+    fetchProfitRecords
+  }
+})

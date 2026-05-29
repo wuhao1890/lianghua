@@ -1,0 +1,26 @@
+{
+  "name": "量化交易系统",
+  "short_name": "量化交易",
+  "description": "专业的量化交易平台",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a3a2a",
+  "theme_color": "#33d685",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vite/
+*.log
+.env
+.env.local
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.DS_Store

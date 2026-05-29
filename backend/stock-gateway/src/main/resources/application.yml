@@ -1,0 +1,66 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: stock-gateway
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins: "*"
+            allowed-methods: "*"
+            allowed-headers: "*"
+            allow-credentials: true
+      routes:
+        - id: stock-auth
+          uri: lb://stock-auth
+          predicates:
+            - Path=/api/auth/**,/api/recharge/**
+          filters:
+            - StripPrefix=0
+
+        - id: stock-stock
+          uri: lb://stock-stock
+          predicates:
+            - Path=/api/stock/**
+          filters:
+            - StripPrefix=0
+            - JwtAuthFilter
+
+        - id: stock-trade
+          uri: lb://stock-trade
+          predicates:
+            - Path=/api/trade/**
+          filters:
+            - StripPrefix=0
+            - JwtAuthFilter
+
+        - id: stock-analysis
+          uri: lb://stock-analysis
+          predicates:
+            - Path=/api/analysis/**
+          filters:
+            - StripPrefix=0
+            - JwtAuthFilter
+
+        - id: stock-ai
+          uri: lb://stock-ai
+          predicates:
+            - Path=/api/ai/**
+          filters:
+            - StripPrefix=0
+            - JwtAuthFilter
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    register-with-eureka: false
+    fetch-registry: false
+  instance:
+    prefer-ip-address: true
+
+jwt:
+  secret: StockTradingSecretKey2024ForJWTTokenGenerationAndValidation

@@ -1,0 +1,61 @@
+[data-theme="dark"] {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-card: #1e2740;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --border-color: #2a2a4a;
+}
+
+[data-theme="dark"] .layout-topbar {
+  background: linear-gradient(135deg, #0f1a0f, #162316) !important;
+}
+
+[data-theme="dark"] .layout-aside {
+  background: #0f1a0f !important;
+}
+
+[data-theme="dark"] .layout-main {
+  background: rgba(18, 18, 30, 0.95) !important;
+}
+
+[data-theme="dark"] .layout-main::before {
+  filter: brightness(0.3) saturate(0.3) !important;
+}
+
+[data-theme="dark"] .market-card,
+[data-theme="dark"] .el-card,
+[data-theme="dark"] .trade-card,
+[data-theme="dark"] .account-card,
+[data-theme="dark"] .signal-card,
+[data-theme="dark"] .chart-card,
+[data-theme="dark"] .price-card,
+[data-theme="dark"] .switcher-card,
+[data-theme="dark"] .ai-card,
+[data-theme="dark"] .index-card,
+[data-theme="dark"] .sectors-card {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .el-table {
+  --el-bg-color: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-table-border-color: var(--border-color);
+  --el-table-header-bg-color: var(--bg-secondary);
+}
+
+[data-theme="dark"] .el-pagination,
+[data-theme="dark"] .el-empty,
+[data-theme="dark"] .el-skeleton {
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-secondary: var(--text-secondary);
+}
+
+[data-theme="dark"] .page-title,
+[data-theme="dark"] .section-title,
+[data-theme="dark"] .card-title,
+[data-theme="dark"] h3,
+[data-theme="dark"] h4 {
+  color: var(--text-primary) !important;
+}

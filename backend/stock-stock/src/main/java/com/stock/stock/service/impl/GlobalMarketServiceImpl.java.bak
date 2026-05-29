@@ -1,0 +1,7 @@
+﻿git : fatal: not a git repository (or any of the parent directories): .git
+At line:7 char:1
++ git show HEAD:"backend/stock-stock/src/main/java/com/stock/stock/serv ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (fatal: not a gi...ectories): .git:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
