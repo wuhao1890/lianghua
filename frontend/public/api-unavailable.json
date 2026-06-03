@@ -1,0 +1,5 @@
+{
+  "code": 503,
+  "message": "SpringMVC backend is not deployed to a public server yet. Real trading data APIs are unavailable on Netlify.",
+  "data": null
+}

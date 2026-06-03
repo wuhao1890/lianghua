@@ -14,8 +14,14 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: Layout,
-    redirect: '/dashboard',
+    redirect: '/home',
     children: [
+      {
+        path: 'home',
+        name: 'Home',
+        component: () => import('@/views/Home.vue'),
+        meta: { title: '首页', icon: 'TrendCharts' }
+      },
       {
         path: 'dashboard',
         name: 'Dashboard',
@@ -56,13 +62,25 @@ const routes: RouteRecordRaw[] = [
         path: 'gold',
         name: 'Gold',
         component: () => import('@/views/Gold.vue'),
-        meta: { title: '黄金', icon: 'Coin' }
+        meta: { title: '金属', icon: 'Coin' }
       },
       {
         path: 'funds',
         name: 'Funds',
         component: () => import('@/views/Funds.vue'),
         meta: { title: '基金', icon: 'DataBoard' }
+      },
+      {
+        path: 'news',
+        name: 'News',
+        component: () => import('@/views/News.vue'),
+        meta: { title: '新闻', icon: 'Document' }
+      },
+      {
+        path: 'ai-lab',
+        name: 'AiLab',
+        component: () => import('@/views/AiLab.vue'),
+        meta: { title: '智能实验室', icon: 'Monitor' }
       },
       {
         path: 'stock/:code',
@@ -110,7 +128,7 @@ const routes: RouteRecordRaw[] = [
         path: 'ai-agent',
         name: 'AiAgent',
         component: () => import('@/views/AiAgent.vue'),
-        meta: { title: 'AI Agent', icon: 'Monitor' }
+        meta: { title: '智能助手', icon: 'Monitor' }
       },
       {
         path: 'admin/recharge',
@@ -148,7 +166,7 @@ router.beforeEach((to, _from, next) => {
   if (to.path !== '/login' && !token) {
     next({ path: '/login', query: { redirect: to.fullPath } })
   } else if (to.path === '/login' && token) {
-    next({ path: '/dashboard' })
+    next({ path: '/home' })
   } else {
     next()
   }

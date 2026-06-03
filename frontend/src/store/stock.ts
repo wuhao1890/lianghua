@@ -20,7 +20,9 @@ function mapSinaStock(s: any): StockInfo {
     marketCap: 0,
     pe: 0,
     turnoverRate: 0,
-    pb: 0
+    pb: 0,
+    totalShares: 0,
+    circulateShares: 0
   }
 }
 
@@ -92,8 +94,9 @@ export const useStockStore = defineStore('stock', () => {
         }
       } else {
         const res = await getListApi(params)
-        stockList.value = res.data.data || []
-        total.value = res.data.data?.length || 0
+        const data = res.data.data as any
+        stockList.value = Array.isArray(data) ? data : (data?.list || [])
+        total.value = Array.isArray(data) ? data.length : (data?.total || 0)
       }
     } catch (error) {
       console.error('获取股票列表失败:', error)
@@ -119,7 +122,7 @@ export const useStockStore = defineStore('stock', () => {
         return currentStock.value
       }
       // 回退到后端API
-      const fallback = await getQuoteApi(code)
+      const fallback = await getQuoteApi(code, { silentError: true })
       currentStock.value = fallback.data.data
       return fallback.data.data
     } catch (error) {

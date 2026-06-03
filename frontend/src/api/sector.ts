@@ -75,3 +75,8 @@ export function aiAnalyzeSectors() {
 export function getAiSectorReport() {
   return request.get('/ai/sector/report')
 }
+
+/** AI推荐五大板块和每个板块五只股票 */
+export function getAiTopSectorPicks() {
+  return request.get('/ai/sector/top-picks')
+}

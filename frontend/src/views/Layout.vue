@@ -1,156 +1,177 @@
 <template>
   <el-container class="layout-container">
-    <!-- 左侧菜单 -->
-    <el-aside :width="isCollapse ? '64px' : '220px'" class="layout-aside">
-      <div class="aside-bg"></div>
-      <div class="aside-overlay"></div>
-      <div class="logo-container">
-        <el-icon :size="26" color="#33d685"><TrendCharts /></el-icon>
-        <span v-show="!isCollapse" class="logo-text">量化交易</span>
+    <el-header class="layout-header">
+      <div class="brand" @click="router.push('/dashboard')">
+        <el-icon :size="26"><TrendCharts /></el-icon>
+        <span>量化交易</span>
       </div>
+
       <el-menu
         :default-active="activeMenu"
-        :collapse="isCollapse"
-        :collapse-transition="false"
+        mode="horizontal"
         router
-        background-color="transparent"
-        text-color="#b8dcc6"
-        active-text-color="#33d685"
-        class="aside-menu"
+        class="top-menu"
+        :ellipsis="false"
+        menu-trigger="click"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><Odometer /></el-icon>
-          <template #title>仪表盘</template>
+        <el-menu-item index="/home">
+            <el-icon><TrendCharts /></el-icon>
+          <template #title>首页</template>
         </el-menu-item>
 
-        <!-- 股票子菜单 -->
-        <el-sub-menu index="stocks">
+        <el-sub-menu index="stock-group">
           <template #title>
             <el-icon><TrendCharts /></el-icon>
             <span>股票</span>
           </template>
-          <el-menu-item index="/market">行情中心</el-menu-item>
-          <el-menu-item index="/indices">大盘指数</el-menu-item>
-          <el-menu-item index="/sectors">板块</el-menu-item>
+          <el-menu-item index="/market">股票总览</el-menu-item>
+          <el-menu-item index="/a-stocks">A 股</el-menu-item>
+          <el-menu-item index="/us-stocks">美股</el-menu-item>
         </el-sub-menu>
 
-        <el-menu-item index="/a-stocks">
-          <el-icon><DataLine /></el-icon>
-          <template #title>A股行情</template>
+        <el-sub-menu index="asset-group">
+          <template #title>
+            <el-icon><Money /></el-icon>
+            <span>资产</span>
+          </template>
+          <el-menu-item index="/funds">基金</el-menu-item>
+          <el-menu-item index="/gold">金属</el-menu-item>
+        </el-sub-menu>
+
+        <el-menu-item index="/news">
+          <el-icon><Document /></el-icon>
+          <template #title>新闻</template>
         </el-menu-item>
-        <el-menu-item index="/us-stocks">
-          <el-icon><DataLine /></el-icon>
-          <template #title>美股行情</template>
-        </el-menu-item>
-        <el-menu-item index="/gold">
-          <el-icon><Coin /></el-icon>
-          <template #title>黄金</template>
-        </el-menu-item>
-        <el-menu-item index="/funds">
-          <el-icon><DataBoard /></el-icon>
-          <template #title>基金</template>
-        </el-menu-item>
-        <el-menu-item index="/trade">
-          <el-icon><Money /></el-icon>
-          <template #title>交易</template>
-        </el-menu-item>
-        <el-menu-item index="/position">
-          <el-icon><Wallet /></el-icon>
-          <template #title>持仓管理</template>
-        </el-menu-item>
-        <el-menu-item index="/history">
-          <el-icon><List /></el-icon>
-          <template #title>交易记录</template>
-        </el-menu-item>
-        <el-menu-item index="/analysis">
-          <el-icon><DataAnalysis /></el-icon>
-          <template #title>收益分析</template>
-        </el-menu-item>
-        <el-menu-item index="/recharge">
-          <el-icon><CreditCard /></el-icon>
-          <template #title>充值中心</template>
-        </el-menu-item>
-        <el-menu-item index="/ai-agent">
+
+        <el-menu-item index="/ai-lab">
           <el-icon><Monitor /></el-icon>
-          <template #title>AI Agent</template>
+          <template #title>智能实验室</template>
         </el-menu-item>
-        <el-menu-item v-if="userStore.isAdmin" index="/admin/recharge">
-          <el-icon><Management /></el-icon>
-          <template #title>充值管理</template>
-        </el-menu-item>
+
+        <el-sub-menu index="trade-center">
+          <template #title>
+            <el-icon><Money /></el-icon>
+            <span>交易</span>
+          </template>
+          <el-menu-item index="/trade">
+            <el-icon><Money /></el-icon>
+            交易下单
+          </el-menu-item>
+          <el-menu-item index="/position">
+            <el-icon><Wallet /></el-icon>
+            持仓管理
+          </el-menu-item>
+          <el-menu-item index="/history">
+            <el-icon><List /></el-icon>
+            交易记录
+          </el-menu-item>
+          <el-menu-item index="/analysis">
+            <el-icon><DataAnalysis /></el-icon>
+            收益分析
+          </el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="user-center">
+          <template #title>
+            <el-icon><UserFilled /></el-icon>
+            <span>用户</span>
+          </template>
+          <el-menu-item index="/dashboard">
+            <el-icon><Odometer /></el-icon>
+            仪表盘
+          </el-menu-item>
+          <el-menu-item index="/recharge">
+            <el-icon><CreditCard /></el-icon>
+            充值中心
+          </el-menu-item>
+          <el-menu-item index="/ai-agent">
+            <el-icon><Monitor /></el-icon>
+            智能助手
+          </el-menu-item>
+          <el-menu-item v-if="userStore.isAdmin" index="/admin/recharge">
+            <el-icon><Management /></el-icon>
+            充值管理
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
-    </el-aside>
 
-    <el-container class="main-container" direction="vertical">
-      <!-- 顶部导航 -->
-      <el-header class="layout-header">
-        <div class="header-left">
-          <el-icon
-            class="collapse-btn"
-            :size="20"
-            @click="toggleCollapse"
-          >
-            <Fold v-if="!isCollapse" />
-            <Expand v-else />
-          </el-icon>
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item :to="{ path: '/dashboard' }">首页</el-breadcrumb-item>
-            <el-breadcrumb-item v-if="currentRoute.meta?.title && currentRoute.name !== 'Dashboard'">
-              {{ currentRoute.meta.title }}
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-          <el-tag size="small" type="success" effect="plain" class="env-tag">量化交易</el-tag>
-        </div>
-        <div class="header-right">
-          <el-dropdown trigger="click" @command="handleCommand">
-            <div class="user-info">
-              <el-avatar :size="32" icon="UserFilled" />
-              <span class="username">{{ userStore.userInfo?.username || '用户' }}</span>
-              <el-icon><ArrowDown /></el-icon>
-            </div>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="dashboard">
-                  <el-icon><Odometer /></el-icon>仪表盘
-                </el-dropdown-item>
-                <el-dropdown-item divided command="logout">
-                  <el-icon><SwitchButton /></el-icon>退出登录
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </el-header>
+      <div class="header-actions">
+        <el-tag size="small" type="success" effect="plain" class="env-tag">量化交易</el-tag>
+        <el-dropdown trigger="click" @command="handleCommand">
+          <button class="user-button" type="button">
+            <el-avatar :size="32" :icon="UserFilled" />
+            <span class="username">{{ userStore.userInfo?.username || '用户' }}</span>
+            <el-icon><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="dashboard">
+                <el-icon><Odometer /></el-icon>
+                仪表盘
+              </el-dropdown-item>
+              <el-dropdown-item divided command="logout">
+                <el-icon><SwitchButton /></el-icon>
+                退出登录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+    </el-header>
 
-      <!-- 主内容区 -->
-      <el-main class="layout-main">
-        <router-view />
-      </el-main>
-    </el-container>
+    <el-main class="layout-main">
+      <div class="page-bar">
+        <el-breadcrumb separator="/">
+          <el-breadcrumb-item :to="{ path: '/dashboard' }">首页</el-breadcrumb-item>
+          <el-breadcrumb-item v-if="route.meta?.title && route.name !== 'Dashboard'">
+            {{ route.meta.title }}
+          </el-breadcrumb-item>
+        </el-breadcrumb>
+      </div>
+      <router-view />
+    </el-main>
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox, ElMessage } from 'element-plus'
-import { Monitor, Grid, Coin, DataBoard } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  ArrowDown,
+  CreditCard,
+  DataAnalysis,
+  Document,
+  List,
+  Management,
+  Money,
+  Monitor,
+  Odometer,
+  SwitchButton,
+  TrendCharts,
+  UserFilled,
+  Wallet
+} from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
-const isCollapse = ref(false)
+
+const stockPaths = ['/market', '/a-stocks', '/us-stocks']
+const assetPaths = ['/gold', '/funds']
+const tradePaths = ['/trade', '/position', '/history', '/analysis']
+const userPaths = ['/dashboard', '/recharge', '/ai-agent', '/admin/recharge']
 
 const activeMenu = computed(() => {
+  if (route.path.startsWith('/stock/')) return '/market'
+  if (route.path.startsWith('/fund/')) return '/funds'
+  if (stockPaths.includes(route.path)) return route.path
+  if (assetPaths.includes(route.path)) return route.path
+  if (tradePaths.includes(route.path)) return route.path
+  if (userPaths.includes(route.path)) return route.path
   return route.path
 })
-
-const currentRoute = computed(() => route)
-
-function toggleCollapse() {
-  isCollapse.value = !isCollapse.value
-}
 
 function handleCommand(command: string) {
   if (command === 'logout') {
@@ -171,183 +192,84 @@ function handleCommand(command: string) {
 
 <style scoped lang="scss">
 .layout-container {
-  height: 100vh;
-}
-
-.layout-aside {
-  background: #1a3a2a;
-  transition: width 0.3s ease;
-  overflow: hidden;
-  position: relative;
-}
-
-.aside-bg {
-  position: absolute;
-  inset: 0;
-  background: url('/bg-sidebar.jpg') center center / cover no-repeat;
-  opacity: 0.4;
-  z-index: 0;
-}
-
-.aside-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(26,58,42,0.3) 0%, rgba(26,58,42,0.75) 100%);
-  z-index: 1;
-}
-
-.logo-container {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 60px;
-  gap: 10px;
-  border-bottom: 1px solid rgba(51, 214, 133, 0.15);
-  background: linear-gradient(180deg, rgba(26,58,42,0.85), rgba(30,66,48,0.85));
-}
-
-.logo-text {
-  color: #33d685;
-  font-size: 18px;
-  font-weight: 700;
-  white-space: nowrap;
-  letter-spacing: 2px;
-}
-
-.aside-menu {
-  position: relative;
-  z-index: 2;
-  border-right: none;
-  height: calc(100vh - 60px);
-  overflow-y: auto;
-  padding-top: 4px;
-
-  &::-webkit-scrollbar {
-    width: 0;
-  }
-
-  :deep(.el-menu-item) {
-    height: 48px;
-    line-height: 48px;
-    margin: 2px 8px;
-    border-radius: 6px;
-    width: calc(100% - 16px);
-
-    &.is-active {
-      background: linear-gradient(135deg, rgba(51, 214, 133, 0.2), rgba(51, 214, 133, 0.08)) !important;
-      border-right: none;
-      color: #33d685 !important;
-      font-weight: 600;
-    }
-
-    &:hover {
-      background-color: rgba(51, 214, 133, 0.1) !important;
-      color: #6aed9a !important;
-    }
-  }
-
-  :deep(.el-sub-menu) {
-    .el-sub-menu__title {
-      height: 48px;
-      line-height: 48px;
-      margin: 2px 8px;
-      border-radius: 6px;
-      width: calc(100% - 16px);
-      color: #b8dcc6;
-
-      &:hover {
-        background-color: rgba(51, 214, 133, 0.1) !important;
-        color: #6aed9a !important;
-      }
-
-      .el-icon {
-        color: #b8dcc6;
-      }
-    }
-
-    .el-menu {
-      background-color: transparent;
-
-      .el-menu-item {
-        padding-left: 56px !important;
-        font-size: 13px;
-        height: 42px;
-        line-height: 42px;
-        margin: 1px 8px;
-
-        &.is-active {
-          background: linear-gradient(135deg, rgba(51, 214, 133, 0.2), rgba(51, 214, 133, 0.08)) !important;
-          color: #33d685 !important;
-        }
-      }
-    }
-
-    &.is-opened {
-      .el-sub-menu__title {
-        color: #33d685;
-        .el-icon { color: #33d685; }
-      }
-    }
-  }
-}
-
-.main-container {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  min-height: 100vh;
+  background: #eef5f0;
 }
 
 .layout-header {
-  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  height: 60px;
+  gap: 18px;
+  height: 64px;
   padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #e0f0e5;
-  box-shadow: 0 1px 4px rgba(51, 214, 133, 0.06);
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid #dfeee5;
+  box-shadow: 0 4px 18px rgba(20, 66, 43, 0.08);
+  backdrop-filter: blur(10px);
 }
 
-.header-left {
+.brand {
   display: flex;
   align-items: center;
-  gap: 16px;
-}
-
-.env-tag {
-  border: 1px solid #33d685;
-  color: #33d685;
-  background: rgba(51, 214, 133, 0.06);
-  font-size: 11px;
-  letter-spacing: 1px;
-}
-
-.collapse-btn {
+  gap: 10px;
+  min-width: 132px;
+  color: #18965b;
   cursor: pointer;
-  color: #606266;
-  transition: color 0.3s;
 
-  &:hover {
-    color: #33d685;
+  span {
+    font-size: 20px;
+    font-weight: 700;
+    white-space: nowrap;
   }
 }
 
-.header-right {
-  display: flex;
-  align-items: center;
+.top-menu {
+  min-width: 0;
+  border-bottom: none;
+  background: transparent;
+
+  :deep(.el-menu-item),
+  :deep(.el-sub-menu__title) {
+    height: 64px;
+    font-size: 15px;
+    border-bottom: 3px solid transparent;
+  }
+
+  :deep(.el-menu-item.is-active),
+  :deep(.el-sub-menu.is-active .el-sub-menu__title) {
+    color: #18965b !important;
+    border-bottom-color: #25b26b !important;
+    font-weight: 600;
+  }
 }
 
-.user-info {
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.env-tag {
+  border-color: #25b26b;
+  color: #18965b;
+  background: rgba(37, 178, 107, 0.06);
+}
+
+.user-button {
   display: flex;
   align-items: center;
   gap: 8px;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: transparent;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: background 0.3s;
 
   &:hover {
     background: #f0faf4;
@@ -355,38 +277,89 @@ function handleCommand(command: string) {
 }
 
 .username {
-  font-size: 14px;
+  max-width: 110px;
+  overflow: hidden;
   color: #303133;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .layout-main {
-  padding: 20px;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   position: relative;
+  min-height: calc(100vh - 64px);
+  padding: 18px 24px 24px;
+  overflow-y: auto;
 }
 
 .layout-main::before {
   content: '';
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
+  z-index: -2;
   background: url('/bg-landscape.jpg') center center / cover no-repeat fixed;
-  filter: brightness(1.1) saturate(0.8);
-  z-index: -1;
+  filter: brightness(1.08) saturate(0.86);
 }
 
 .layout-main::after {
   content: '';
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(240, 247, 242, 0.82);
+  inset: 0;
   z-index: -1;
+  background: rgba(240, 247, 242, 0.84);
+}
+
+.page-bar {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 920px) {
+  .layout-header {
+    grid-template-columns: 1fr auto;
+    height: auto;
+    padding: 10px 14px 0;
+  }
+
+  .top-menu {
+    grid-column: 1 / -1;
+    order: 3;
+    overflow-x: auto;
+    white-space: nowrap;
+
+    &::-webkit-scrollbar {
+      height: 0;
+    }
+
+    :deep(.el-menu-item),
+    :deep(.el-sub-menu__title) {
+      height: 48px;
+    }
+  }
+
+  .header-actions {
+    min-width: 0;
+  }
+
+  .env-tag {
+    display: none;
+  }
+
+  .layout-main {
+    min-height: calc(100vh - 112px);
+    padding: 14px;
+  }
+}
+
+@media (max-width: 560px) {
+  .brand span {
+    font-size: 18px;
+  }
+
+  .username {
+    display: none;
+  }
 }
 </style>

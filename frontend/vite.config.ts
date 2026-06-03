@@ -30,27 +30,27 @@ export default defineConfig({
     },
     proxy: {
       '/api/auth': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       '/api/stock': {
-        target: 'http://localhost:8082',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       '/api/trade': {
-        target: 'http://localhost:8083',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       '/api/analysis': {
-        target: 'http://localhost:8084',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       '/api/ai': {
-        target: 'http://localhost:8085',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       '/api/recharge': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       // 新浪财经API代理

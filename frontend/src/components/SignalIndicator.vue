@@ -14,13 +14,13 @@
         >
           <div class="indicator-header">
             <span class="indicator-tag">{{ indicator }}</span>
-            <span class="indicator-fullname">{{ indicatorName(indicator) }}</span>
+            <span class="indicator-fullname">{{ indicatorName(String(indicator)) }}</span>
             <el-tag :type="getTagType(msg)" size="small" effect="light">
               {{ getSignalLabel(msg) }}
             </el-tag>
           </div>
           <div class="indicator-desc">
-            {{ getSignalDesc(indicator, msg) }}
+            {{ getSignalDesc(String(indicator), msg) }}
           </div>
         </div>
       </div>

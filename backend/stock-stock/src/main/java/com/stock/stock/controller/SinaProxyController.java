@@ -142,10 +142,16 @@ public class SinaProxyController {
             s.put(KEY_OPEN, parseD(f[1]));
             s.put(KEY_PREV_CLOSE, parseD(f[2]));
             s.put(KEY_CURRENT, parseD(f[3]));
+            if ((double) s.get(KEY_CURRENT) <= 0 || f[0] == null || f[0].trim().isEmpty()) {
+                continue;
+            }
             s.put(KEY_HIGH, parseD(f[4]));
             s.put(KEY_LOW, parseD(f[5]));
             s.put(KEY_VOLUME, parseD(f[8]));
             s.put(KEY_AMOUNT, parseD(f[9]));
+            if ((double) s.get(KEY_OPEN) <= 0 || (double) s.get(KEY_VOLUME) <= 0) {
+                continue;
+            }
             addChange(s);
             list.add(s);
         }
@@ -170,9 +176,15 @@ public class SinaProxyController {
             // 提取新浪格式代码
             String rawCode = line.substring(line.indexOf("v_") + 2, eq);
             double current = parseD(f[3]);
+            if (current <= 0 || f[1] == null || f[1].trim().isEmpty()) {
+                continue;
+            }
             double prevClose = parseD(f[4]);
             double open = parseD(f[5]);
             double volume = parseD(f[6]);
+            if (open <= 0 || volume <= 0) {
+                continue;
+            }
             double amount = parseD(f[7]);
             double high = parseD(f[33] != null && !f[33].isEmpty() ? f[33] : "0");
             double low = parseD(f[34] != null && !f[34].isEmpty() ? f[34] : "0");
@@ -207,16 +219,23 @@ public class SinaProxyController {
             if (data == null) return null;
 
             double current = data.getDoubleValue("f43");
+            String name = data.getString("f58");
+            if (current <= 0 || name == null || name.trim().isEmpty()) {
+                return null;
+            }
             double prevClose = data.getDoubleValue("f44");
             double open = data.getDoubleValue("f45");
+            double volume = data.getDoubleValue("f48");
+            if (open <= 0 || volume <= 0) {
+                return null;
+            }
             double high = data.getDoubleValue("f46");
             double low = data.getDoubleValue("f47");
-            double volume = data.getDoubleValue("f48");
             double amount = data.getDoubleValue("f50");
 
             Map<String, Object> s = new LinkedHashMap<>();
             s.put(KEY_CODE, code);
-            s.put(KEY_NAME, data.getString("f58"));
+            s.put(KEY_NAME, name);
             s.put(KEY_OPEN, open);
             s.put(KEY_PREV_CLOSE, prevClose);
             s.put(KEY_CURRENT, current);
@@ -272,16 +291,24 @@ public class SinaProxyController {
         Map<String, Object> result = new HashMap<>();
         try {
             String[] allCodes = getACodes();
-            int start = (page - 1) * pageSize;
-            int end = Math.min(start + pageSize, allCodes.length);
-
-            // 批量请求实时行情
-            StringBuilder sb = new StringBuilder();
-            for (int i = start; i < end; i++) {
-                if (i > start) sb.append(",");
-                sb.append(allCodes[i]);
+            int targetStart = Math.max(0, (page - 1) * pageSize);
+            int validSeen = 0;
+            int cursor = 0;
+            List<Map<String, Object>> stocks = new ArrayList<>();
+            while (cursor < allCodes.length && stocks.size() < pageSize) {
+                int end = Math.min(cursor + 80, allCodes.length);
+                StringBuilder sb = new StringBuilder();
+                for (int i = cursor; i < end; i++) {
+                    if (i > cursor) sb.append(",");
+                    sb.append(allCodes[i]);
+                }
+                for (Map<String, Object> stock : fetchRealtimeBatch(sb.toString())) {
+                    if (validSeen++ >= targetStart && stocks.size() < pageSize) {
+                        stocks.add(stock);
+                    }
+                }
+                cursor = end;
             }
-            List<Map<String, Object>> stocks = fetchRealtimeBatch(sb.toString());
 
             result.put("code", 200);
             result.put("data", stocks);

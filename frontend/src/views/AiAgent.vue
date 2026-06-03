@@ -5,7 +5,7 @@
         <el-tab-pane label="模型配置" name="configs">
           <!-- 模型配置区域 -->
           <div class="section-header">
-            <h3>AI 模型配置管理</h3>
+            <h3>智能模型配置管理</h3>
             <el-button type="primary" @click="openAddDialog">
               <el-icon><Plus /></el-icon>
               新增配置
@@ -17,12 +17,12 @@
             <el-table-column prop="provider" label="供应商" width="120">
               <template #default="{ row }">
                 <el-tag :type="getProviderTagType(row.provider)" effect="plain">
-                  {{ row.provider }}
+                  {{ providerName(row.provider) }}
                 </el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="modelName" label="模型" width="180" />
-            <el-table-column prop="baseUrl" label="API地址" min-width="240" show-overflow-tooltip />
+            <el-table-column prop="baseUrl" label="接口地址" min-width="240" show-overflow-tooltip />
             <el-table-column label="状态" width="80">
               <template #default="{ row }">
                 <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
@@ -45,7 +45,7 @@
 
           <el-alert class="recommend-hint" title="推荐配置" type="info" :closable="false" show-icon>
             <template #default>
-              <span>DeepSeek（deepseek.com）、通义千问（aliyun.com）、OpenAI（platform.openai.com）</span>
+              <span>深度求索、通义千问、开放智能模型等服务；请按服务商文档填写接口信息。</span>
             </template>
           </el-alert>
 
@@ -64,21 +64,21 @@
               label-position="top"
             >
               <el-form-item label="配置名称" prop="name">
-                <el-input v-model="formData.name" placeholder="例如：我的DeepSeek配置" />
+                <el-input v-model="formData.name" placeholder="例如：我的本地模型配置" />
               </el-form-item>
               <el-form-item label="供应商" prop="provider">
                 <el-select v-model="formData.provider" style="width: 100%">
-                  <el-option label="OpenAI" value="openai" />
-                  <el-option label="DeepSeek" value="deepseek" />
-                  <el-option label="通义千问(Qwen)" value="qwen" />
-                  <el-option label="自定义(Custom)" value="custom" />
+                  <el-option label="开放智能模型" value="openai" />
+                  <el-option label="深度求索" value="deepseek" />
+                  <el-option label="通义千问" value="qwen" />
+                  <el-option label="自定义" value="custom" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="API密钥" prop="apiKey">
-                <el-input v-model="formData.apiKey" type="password" show-password placeholder="sk-..." />
+              <el-form-item label="接口密钥" prop="apiKey">
+                <el-input v-model="formData.apiKey" type="password" show-password placeholder="请输入接口密钥" />
               </el-form-item>
-              <el-form-item label="API地址" prop="baseUrl">
-                <el-input v-model="formData.baseUrl" placeholder="https://api.openai.com/v1" />
+              <el-form-item label="接口地址" prop="baseUrl">
+                <el-input v-model="formData.baseUrl" placeholder="请输入模型服务接口地址" />
               </el-form-item>
               <el-form-item label="模型名称" prop="modelName">
                 <el-input v-model="formData.modelName" placeholder="gpt-3.5-turbo" />
@@ -195,7 +195,7 @@
                 <div class="section-title">
                   <span class="title-icon">&#x1F5E3;&#xFE0F;</span>
                   <span>大V舆情分析（占综合评分50%）</span>
-                  <el-tag size="small" type="info" style="margin-left:8px">以下内容由AI基于市场公开信息模拟生成</el-tag>
+                  <el-tag size="small" type="info" style="margin-left:8px">以下内容由智能模型基于市场公开信息生成</el-tag>
                 </div>
               </template>
 
@@ -380,8 +380,8 @@ const defaultForm: AiModelConfigRequest = {
   name: '',
   provider: 'openai',
   apiKey: '',
-  baseUrl: 'https://api.openai.com/v1',
-  modelName: 'gpt-3.5-turbo'
+  baseUrl: '',
+  modelName: ''
 }
 
 const formData = reactive<AiModelConfigRequest>({ ...defaultForm })
@@ -389,8 +389,8 @@ const formData = reactive<AiModelConfigRequest>({ ...defaultForm })
 const formRules = {
   name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }],
   provider: [{ required: true, message: '请选择供应商', trigger: 'change' }],
-  apiKey: [{ required: true, message: '请输入API密钥', trigger: 'blur' }],
-  baseUrl: [{ required: true, message: '请输入API地址', trigger: 'blur' }],
+  apiKey: [{ required: true, message: '请输入接口密钥', trigger: 'blur' }],
+  baseUrl: [{ required: true, message: '请输入接口地址', trigger: 'blur' }],
   modelName: [{ required: true, message: '请输入模型名称', trigger: 'blur' }]
 }
 
@@ -577,6 +577,16 @@ function getProviderTagType(provider: string) {
   return map[provider] || 'info'
 }
 
+function providerName(provider: string) {
+  const map: Record<string, string> = {
+    openai: '开放智能模型',
+    deepseek: '深度求索',
+    qwen: '通义千问',
+    custom: '自定义'
+  }
+  return map[provider] || '自定义'
+}
+
 function getSignalType(signal: string) {
   if (signal === 'BUY') return 'danger'
   if (signal === 'SELL') return 'success'
@@ -584,9 +594,9 @@ function getSignalType(signal: string) {
 }
 
 function getSignalText(signal: string) {
-  if (signal === 'BUY') return '买入 BUY'
-  if (signal === 'SELL') return '卖出 SELL'
-  return '持有 HOLD'
+  if (signal === 'BUY') return '买入'
+  if (signal === 'SELL') return '卖出'
+  return '持有'
 }
 
 function getScoreColor(score: number) {
@@ -615,9 +625,9 @@ function getConsensusTagType(consensus: string) {
 }
 
 function getConsensusText(consensus: string) {
-  if (consensus === 'bullish') return '看涨 Bullish'
-  if (consensus === 'bearish') return '看跌 Bearish'
-  return '中性 Neutral'
+  if (consensus === 'bullish') return '看涨'
+  if (consensus === 'bearish') return '看跌'
+  return '中性'
 }
 
 function getDaVTagType(type: string) {
@@ -648,7 +658,7 @@ function showDavDetail(op: any) {
     ${timeStr}
     <div style="margin-top:12px;font-size:12px;color:#909399">
       影响力：${stars}
-      <br/>来源：AI基于公开财经媒体报道和市场观点综合生成
+      <br/>来源：智能模型基于公开财经媒体报道和市场观点综合生成
     </div>`,
     dangerouslyUseHTMLString: true,
     confirmButtonText: '关闭'

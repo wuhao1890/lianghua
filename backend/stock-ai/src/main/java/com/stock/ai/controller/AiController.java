@@ -168,6 +168,26 @@ public class AiController {
     }
 
     /**
+     * 获取股票相关新闻
+     * GET /api/ai/news?stockCode=300308
+     */
+    @GetMapping("/news")
+    public ResponseEntity<Map<String, Object>> news(@RequestParam String stockCode) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<AiAnalysisResponse.NewsItem> list = aiAnalysisService.getStockNews(stockCode);
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", list);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
      * 获取分析历史
      * GET /api/ai/history
      */

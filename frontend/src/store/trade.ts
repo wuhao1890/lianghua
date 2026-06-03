@@ -54,8 +54,14 @@ export const useTradeStore = defineStore('trade', () => {
     loading.value = true
     try {
       const res = await getOrdersApi(params)
-      orders.value = res.data.data?.list || []
-      total.value = res.data.data?.total || 0
+      const data = res.data.data as any
+      const list = Array.isArray(data) ? data : (data?.list || [])
+      orders.value = list.map((o: any) => ({
+        ...o,
+        createdAt: o.createdAt || o.createTime,
+        updatedAt: o.updatedAt || o.updateTime
+      }))
+      total.value = Array.isArray(data) ? data.length : (data?.total || list.length)
     } catch (error) {
       orders.value = []
       total.value = 0
@@ -83,8 +89,22 @@ export const useTradeStore = defineStore('trade', () => {
   async function getProfitAnalysis() {
     try {
       const res = await getProfitApi()
-      profitAnalysis.value = res.data.data
-      return res.data.data
+      const data = res.data.data as any
+      const mapped = {
+        ...data,
+        totalTradeCount: data.totalTradeCount ?? data.totalTrades ?? 0,
+        winCount: data.winCount ?? data.winTrades ?? 0,
+        loseCount: data.loseCount ?? data.loseTrades ?? 0,
+        winRate: Number(data.winRate || 0) / 100,
+        totalLoss: data.totalLoss ?? 0,
+        avgProfit: data.avgProfit ?? 0,
+        avgLoss: data.avgLoss ?? 0,
+        profitLossRatio: data.profitLossRatio ?? 0,
+        maxDrawdown: data.maxDrawdown ?? 0,
+        sharpeRatio: data.sharpeRatio ?? 0
+      }
+      profitAnalysis.value = mapped
+      return mapped
     } catch (error) {
       profitAnalysis.value = null
       return null

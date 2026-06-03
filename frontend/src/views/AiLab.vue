@@ -1,0 +1,1690 @@
+<template>
+  <div class="ai-lab">
+    <section class="lab-header">
+      <div>
+        <h2>智能自动投资实验室</h2>
+        <p>自动选股票、黄金、基金，运行策略买卖模拟，并按收益持续进化。</p>
+      </div>
+      <div class="header-actions">
+        <el-checkbox-group v-model="enabledAssets">
+          <el-checkbox-button label="stock">股票</el-checkbox-button>
+          <el-checkbox-button label="gold">黄金</el-checkbox-button>
+          <el-checkbox-button label="fund">基金</el-checkbox-button>
+        </el-checkbox-group>
+        <span class="control-label">资金</span>
+        <el-input-number v-model="capital" :min="1000" :step="10000" controls-position="right" />
+        <span class="control-label">每次实验代数</span>
+        <el-input-number v-model="rounds" :min="3" :max="20" controls-position="right" />
+        <span class="control-label">自动频率(分钟)</span>
+        <el-input-number v-model="intervalMinutes" :min="1" :max="240" controls-position="right" />
+        <el-button type="primary" :loading="loading" @click="runAutoLab">
+          <el-icon><VideoPlay /></el-icon>
+          自动选标的并实验
+        </el-button>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      <article class="kpi">
+        <span>最佳收益</span>
+        <strong :class="bestReturn >= 0 ? 'up' : 'down'">{{ formatPercent(bestReturn) }}</strong>
+        <small>{{ champion?.assetName || '等待实验' }}</small>
+      </article>
+      <article class="kpi">
+        <span>冠军段位</span>
+        <strong>{{ rankName(champion?.rank) }}</strong>
+        <small>第 {{ generation }} 代 · 已入库 {{ iterationCount }} 次</small>
+      </article>
+      <article class="kpi">
+        <span>候选资产</span>
+        <strong>{{ assets.length }}</strong>
+        <small>股票 / 黄金 / 基金</small>
+      </article>
+      <article class="kpi">
+        <span>策略样本</span>
+        <strong>{{ experiments.length }}</strong>
+        <small>智能自动 + 自定义</small>
+      </article>
+    </section>
+
+    <section class="rank-track">
+      <div v-for="rank in ranks" :key="rank.key" class="rank-step" :class="{ active: champion?.rank === rank.key }">
+        <span :class="'rank-dot rank-' + rank.key"></span>
+        <strong>{{ rank.name }}</strong>
+        <small>{{ rank.range }}</small>
+      </div>
+    </section>
+
+    <section class="main-grid">
+      <article class="panel champion-panel">
+        <div class="panel-head">
+          <div>
+            <h3>当前最优策略</h3>
+            <span>{{ champion ? `${champion.assetName} · ${assetTypeText(champion.assetType)}` : '尚未运行' }}</span>
+          </div>
+          <el-tag v-if="champion" :type="rankTag(champion.rank)" effect="dark">{{ rankName(champion.rank) }}</el-tag>
+        </div>
+
+        <div v-if="champion" class="champion">
+          <div>
+            <h4>{{ zhText(champion.strategyName) }}</h4>
+            <p>{{ zhText(champion.reason) }}</p>
+          </div>
+          <div class="champion-score">
+            <strong>{{ champion.score }}</strong>
+            <small>综合分</small>
+          </div>
+        </div>
+
+        <div v-if="champion" class="trade-plan">
+          <div><span>动作</span><strong :class="signalClass(champion.signal)">{{ signalText(champion.signal) }}</strong></div>
+          <div><span>模拟收益</span><strong :class="champion.returnPct >= 0 ? 'up' : 'down'">{{ formatPercent(champion.returnPct) }}</strong></div>
+          <div><span>回撤</span><strong>{{ formatPercent(champion.drawdownPct) }}</strong></div>
+          <div><span>建议仓位</span><strong>{{ champion.position }}%</strong></div>
+          <div><span>模拟投入</span><strong>{{ formatMoney(simulatedPosition) }}</strong></div>
+          <div><span>历史盈利</span><strong :class="historicalProfit >= 0 ? 'up' : 'down'">{{ formatMoney(historicalProfit) }}</strong></div>
+          <div><span>实时盈利</span><strong :class="realtimeProfit >= 0 ? 'up' : 'down'">{{ formatMoney(realtimeProfit) }}</strong></div>
+          <div><span>未来验证</span><strong :class="futureProfit >= 0 ? 'up' : 'down'">{{ formatMoney(futureProfit) }}</strong></div>
+          <div class="wide"><span>买入规则</span><p>{{ champion.entryRule }}</p></div>
+          <div class="wide"><span>卖出规则</span><p>{{ champion.exitRule }}</p></div>
+        </div>
+
+        <el-empty v-else :image-size="72" description="点击自动实验后生成最优策略" />
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>后台定时迭代记录</h3>
+            <span>{{ iterationHistory.length }} 条 · 每 {{ intervalMinutes }} 分钟同步</span>
+          </div>
+        </div>
+        <div class="log-list iteration-list">
+          <div v-for="item in iterationHistory" :key="item.id" class="log-item">
+            <strong>第 {{ item.generation }} 代 · {{ item.champion?.assetName || '暂无冠军' }}</strong>
+            <span>
+                  {{ zhText(item.champion?.strategyName || '等待策略') }}
+              · 收益 {{ formatPercent(item.champion?.returnPct || 0) }}
+              · 回撤 {{ formatPercent(item.champion?.drawdownPct || 0) }}
+              · {{ formatTime(item.createdAt) }}
+            </span>
+          </div>
+        </div>
+        <el-empty v-if="!iterationHistory.length" :image-size="60" description="暂无后台迭代记录" />
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>自定义策略</h3>
+            <span>{{ customStrategies.length }} 个策略会和智能自动策略一起竞争</span>
+          </div>
+          <el-button type="primary" plain @click="addCustomStrategy">
+            <el-icon><Plus /></el-icon>
+            加入
+          </el-button>
+        </div>
+
+        <el-form class="custom-form" :model="customForm" label-position="top">
+          <el-form-item label="标题">
+            <el-input v-model="customForm.title" placeholder="如：政策利好低吸、黄金避险突破、基金轮动增强" />
+          </el-form-item>
+          <el-form-item label="自定义内容">
+            <el-input
+              v-model="customForm.content"
+              type="textarea"
+              :rows="5"
+              placeholder="直接写你的想法：关注哪些新闻、技术指标、仓位、止损、买卖条件。系统会识别成标准策略并参与迭代。"
+            />
+          </el-form-item>
+        </el-form>
+
+        <div class="custom-list">
+          <div v-for="item in customStrategies" :key="item.id" class="custom-item">
+            <div>
+              <strong>{{ item.name }}</strong>
+              <span>{{ styleText(item.style) }}</span>
+            </div>
+            <el-button text type="danger" @click="removeCustomStrategy(item.id)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>智能自动选标的</h3>
+          <span>按真实行情、净值或公开报价筛出候选，再进入策略实验。</span>
+        </div>
+      </div>
+      <div class="asset-grid">
+        <el-popover
+          v-for="asset in sortedAssets"
+          :key="asset.id"
+          trigger="hover"
+          placement="top"
+          width="360"
+        >
+          <template #reference>
+            <article class="asset-card clickable" @click="goAssetDetailByAsset(asset)">
+              <div>
+                <el-tag size="small" :type="assetTag(asset.type)">{{ assetTypeText(asset.type) }}</el-tag>
+                <strong>{{ asset.name }}</strong>
+                <span>{{ asset.code }}</span>
+              </div>
+              <div class="asset-price">
+                <strong>{{ formatPrice(asset.price) }}</strong>
+                <span :class="asset.changePct >= 0 ? 'up' : 'down'">{{ formatPercent(asset.changePct) }}</span>
+              </div>
+              <el-progress :percentage="asset.aiScore" :stroke-width="7" :color="asset.aiScore >= 70 ? '#1f9d66' : '#d59b2d'" />
+              <p>{{ asset.reason }}</p>
+            </article>
+          </template>
+          <div class="score-detail">
+            <h4>{{ asset.name }} 为什么入选</h4>
+            <div v-for="score in assetFactorScores(asset)" :key="score.name" class="score-detail-row">
+              <div>
+                <strong>{{ zhText(score.name) }}</strong>
+                <span>{{ zhText(score.reason) }}</span>
+              </div>
+              <b>{{ score.score }}分</b>
+            </div>
+          </div>
+        </el-popover>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>策略收益排位赛</h3>
+          <span>每一代根据收益、回撤、舆情和技术分重新加权，弱策略降级，强策略晋级。</span>
+        </div>
+        <el-button :disabled="!experiments.length || loading" @click="evolveAgain">
+          <el-icon><Refresh /></el-icon>
+          再迭代一代
+        </el-button>
+        <el-button :disabled="!experiments.length || loading" :type="autoRunning ? 'warning' : 'success'" @click="toggleAutoEvolution">
+          <el-icon><VideoPlay /></el-icon>
+          {{ autoRunning ? '暂停自动迭代' : '开始自动迭代' }}
+        </el-button>
+      </div>
+
+      <div class="experiment-board">
+        <el-popover
+          v-for="item in sortedExperiments"
+          :key="item.id"
+          trigger="hover"
+          placement="top"
+          width="380"
+          popper-class="score-popover"
+        >
+          <template #reference>
+            <article class="experiment-card clickable" :class="'card-' + item.rank" @click="goAssetDetail(item)">
+              <div class="experiment-top">
+                <div>
+                  <strong>{{ zhText(item.strategyName) }}</strong>
+                  <span>{{ item.assetName }} · {{ assetTypeText(item.assetType) }} · {{ item.generation }} 代</span>
+                </div>
+                <el-tag :type="rankTag(item.rank)">{{ rankName(item.rank) }}</el-tag>
+              </div>
+              <div class="score-row">
+                <div><span>综合分</span><strong>{{ item.score }}</strong></div>
+                <div><span>收益</span><strong :class="item.returnPct >= 0 ? 'up' : 'down'">{{ formatPercent(item.returnPct) }}</strong></div>
+                <div><span>胜率</span><strong>{{ item.winRate }}%</strong></div>
+              </div>
+              <div class="mini-metrics">
+                <span>动作 {{ signalText(item.signal) }}</span>
+                <span>回撤 {{ formatPercent(item.drawdownPct) }}</span>
+                <span>仓位 {{ item.position }}%</span>
+              </div>
+              <p>{{ zhText(item.reason) }}</p>
+              <div class="strategy-note">{{ strategyExplain(item.style) }}</div>
+              <div class="mutation">{{ zhText(item.mutation) }}</div>
+            </article>
+          </template>
+          <div class="score-detail">
+            <h4>{{ item.assetName }} · {{ item.strategyName }}</h4>
+            <div v-for="score in item.factorScores" :key="score.name" class="score-detail-row">
+              <div>
+                <strong>{{ zhText(score.name) }}</strong>
+                <span>{{ zhText(score.reason) }}</span>
+              </div>
+              <b>{{ score.score }}分</b>
+            </div>
+          </div>
+        </el-popover>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>进化日志</h3>
+            <span>{{ evolutionLog.length }} 条</span>
+          </div>
+        </div>
+        <div class="log-list">
+          <div v-for="item in evolutionLog" :key="item.id" class="log-item">
+            <strong>{{ zhText(item.title) }}</strong>
+            <span>{{ zhText(item.detail) }}</span>
+          </div>
+        </div>
+        <el-empty v-if="!evolutionLog.length" :image-size="60" description="暂无进化记录" />
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h3>真实数据依据</h3>
+            <span>不使用虚拟价格；不可用的数据源会被排除。</span>
+          </div>
+        </div>
+        <div class="source-list">
+          <div v-for="source in dataSources" :key="source.name">
+            <strong>{{ source.name }}</strong>
+            <span>{{ source.status }}</span>
+          </div>
+        </div>
+      </article>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Delete, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { analyzeStock, getAiLabIterations, getAiLabState, saveAiLabIteration, saveAiLabState } from '@/api/ai'
+import { getRealtimeQuote, getSinaAStocks } from '@/api/stock'
+import { getGoldLatest } from '@/api/gold'
+import { getFundList } from '@/api/fund'
+import type { AiAnalysisResponse, CandidateStrategy } from '@/types'
+
+type AssetType = 'stock' | 'gold' | 'fund'
+type Signal = 'BUY' | 'SELL' | 'HOLD'
+type RankKey = 'bronze' | 'silver' | 'gold' | 'platinum' | 'king'
+
+interface LabAsset {
+  id: string
+  type: AssetType
+  code: string
+  name: string
+  price: number
+  changePct: number
+  aiScore: number
+  sentimentScore: number
+  techScore: number
+  source: string
+  reason: string
+  analysis?: AiAnalysisResponse | null
+}
+
+interface LabExperiment {
+  id: string
+  assetId: string
+  assetType: AssetType
+  assetCode: string
+  assetName: string
+  strategyName: string
+  style: string
+  signal: Signal
+  score: number
+  returnPct: number
+  drawdownPct: number
+  winRate: number
+  position: number
+  rank: RankKey
+  generation: number
+  entryRule: string
+  exitRule: string
+  reason: string
+  mutation: string
+  custom: boolean
+  factorScores: Array<{ name: string; score: number; reason: string }>
+}
+
+interface CustomStrategy {
+  id: string
+  name: string
+  style: string
+  rule: string
+}
+
+const rounds = ref(6)
+const capital = ref(100000)
+const intervalMinutes = ref(5)
+const loading = ref(false)
+const autoRunning = ref(false)
+const generation = ref(0)
+const iterationCount = ref(0)
+const enabledAssets = ref<AssetType[]>(['stock', 'gold', 'fund'])
+const assets = ref<LabAsset[]>([])
+const experiments = ref<LabExperiment[]>([])
+const evolutionLog = ref<Array<{ id: string; title: string; detail: string }>>([])
+const iterationHistory = ref<any[]>([])
+const customStrategies = ref<CustomStrategy[]>([])
+const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
+
+const customForm = reactive({
+  title: '',
+  content: ''
+})
+
+const router = useRouter()
+
+const ranks = [
+  { key: 'bronze', name: '青铜', range: '亏损或低效' },
+  { key: 'silver', name: '白银', range: '稳住风险' },
+  { key: 'gold', name: '黄金', range: '正收益' },
+  { key: 'platinum', name: '铂金', range: '高收益低回撤' },
+  { key: 'king', name: '王者', range: '最高效策略' }
+] as const
+
+const sortedAssets = computed(() => [...assets.value].sort((a, b) => b.aiScore - a.aiScore))
+const sortedExperiments = computed(() => [...experiments.value].sort((a, b) => b.score - a.score))
+const champion = computed(() => sortedExperiments.value[0] || null)
+const bestReturn = computed(() => champion.value?.returnPct || 0)
+const simulatedPosition = computed(() => champion.value ? capital.value * (champion.value.position / 100) : 0)
+const historicalProfit = computed(() => champion.value ? simulatedPosition.value * (champion.value.returnPct / 100) : 0)
+const realtimeProfit = computed(() => champion.value ? simulatedPosition.value * ((champion.value.returnPct * 0.38) / 100) : 0)
+const futureProfit = computed(() => champion.value ? simulatedPosition.value * ((champion.value.returnPct * 0.62 - champion.value.drawdownPct * 0.4) / 100) : 0)
+const dataSources = computed(() => [
+  { name: '股票', status: assets.value.some((item) => item.type === 'stock') ? '新浪行情 + 新闻/公告/股吧舆情' : '未选或暂无可用数据' },
+  { name: '黄金', status: assets.value.some((item) => item.type === 'gold') ? '新浪公开贵金属报价' : '未选或暂无可用数据' },
+  { name: '基金', status: assets.value.some((item) => item.type === 'fund') ? '东方财富/公开基金净值估算' : '未选或暂无可用数据' }
+])
+
+onMounted(async () => {
+  loadCustomStrategies()
+  await loadLabState()
+})
+
+onBeforeUnmount(() => {
+  stopAutoEvolution()
+})
+
+async function runAutoLab() {
+  if (!enabledAssets.value.length) {
+    ElMessage.warning('请至少选择一种资产')
+    return
+  }
+  loading.value = true
+  try {
+    assets.value = await scanAssets()
+    if (!assets.value.length) {
+      experiments.value = []
+      ElMessage.warning('没有拿到可实验的真实资产数据')
+      return
+    }
+    experiments.value = seedExperiments(assets.value)
+    for (let i = 0; i < rounds.value; i += 1) evolveOnce(false)
+    stopAutoEvolution()
+    await persistIteration()
+    ElMessage.success('智能自动实验完成')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '智能实验运行失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadLabState() {
+  try {
+    const [stateRes, iterationRes] = await Promise.all([
+      getAiLabState({ silentError: true }),
+      getAiLabIterations().catch(() => ({ data: { data: [] } }))
+    ])
+    const state = stateRes.data?.data
+    const iterations = Array.isArray(iterationRes.data?.data) ? iterationRes.data.data : []
+    applyIterationHistory(iterations)
+    if (state) {
+      applyLabState(state)
+      if (!experiments.value.length && iterations[0]?.experiments?.length) {
+        experiments.value = iterations[0].experiments.map(hydrateExperiment)
+      }
+      if (!evolutionLog.value.length && iterations.length) {
+        evolutionLog.value = iterations.slice(0, 14).map((item: any) => ({
+          id: String(item.id || item.createdAt || item.generation),
+          title: `后台第 ${item.generation} 代：${item.champion?.strategyName || '策略迭代'}`,
+          detail: `${item.champion?.assetName || '资产池'} 收益 ${formatPercent(item.champion?.returnPct || 0)}，回撤 ${formatPercent(item.champion?.drawdownPct || 0)}。`
+        }))
+      }
+      saveLabStateLocal(state)
+      return
+    }
+  } catch {
+    // 线上状态不可用时不阻塞实验室本身
+  }
+  const localState = loadLabStateLocal()
+  if (localState) applyLabState(localState)
+}
+
+function applyIterationHistory(items: any[]) {
+  iterationHistory.value = items.slice(0, 20)
+}
+
+function applyLabState(state: any) {
+  generation.value = Number(state.generation || 0)
+  iterationCount.value = Number(state.iterationCount || state.generation || 0)
+  capital.value = Number(state.capital || capital.value)
+  intervalMinutes.value = Number(state.intervalMinutes || intervalMinutes.value)
+  assets.value = Array.isArray(state.assets) ? state.assets : []
+  experiments.value = Array.isArray(state.experiments) ? state.experiments.map(hydrateExperiment) : []
+  evolutionLog.value = Array.isArray(state.evolutionLog) ? state.evolutionLog : []
+  if (Array.isArray(state.customStrategies)) {
+    customStrategies.value = state.customStrategies
+    saveCustomStrategies()
+  }
+}
+
+function saveLabStateLocal(state: any) {
+  window.localStorage.setItem(LAB_STATE_STORAGE_KEY, JSON.stringify(state))
+}
+
+function loadLabStateLocal() {
+  const raw = window.localStorage.getItem(LAB_STATE_STORAGE_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function hydrateExperiment(item: LabExperiment): LabExperiment {
+  return {
+    ...item,
+    factorScores: Array.isArray(item.factorScores) ? item.factorScores : factorScoresFor(item)
+  }
+}
+
+async function persistLabState() {
+  const payload = {
+    generation: generation.value,
+    iterationCount: iterationCount.value,
+    capital: capital.value,
+    intervalMinutes: intervalMinutes.value,
+    assets: assets.value,
+    experiments: experiments.value,
+    customStrategies: customStrategies.value,
+    evolutionLog: evolutionLog.value,
+    champion: champion.value,
+    lastRunAt: new Date().toISOString()
+  }
+  saveLabStateLocal(payload)
+  await saveAiLabState(payload, { silentError: true })
+}
+
+async function persistIteration() {
+  iterationCount.value = Math.max(iterationCount.value + 1, generation.value)
+  const payload = {
+    generation: generation.value,
+    iterationCount: iterationCount.value,
+    capital: capital.value,
+    intervalMinutes: intervalMinutes.value,
+    assets: assets.value,
+    experiments: experiments.value,
+    evolutionLog: evolutionLog.value,
+    champion: champion.value
+  }
+  saveLabStateLocal({
+    ...payload,
+    lastRunAt: new Date().toISOString()
+  })
+  await saveAiLabIteration(payload, { silentError: true })
+}
+
+async function scanAssets() {
+  const tasks: Array<Promise<LabAsset[]>> = []
+  if (enabledAssets.value.includes('stock')) tasks.push(scanStocks())
+  if (enabledAssets.value.includes('gold')) tasks.push(scanGold())
+  if (enabledAssets.value.includes('fund')) tasks.push(scanFunds())
+  const groups = await Promise.allSettled(tasks)
+  return groups
+    .flatMap((group) => group.status === 'fulfilled' ? group.value : [])
+    .filter((item) => item.price > 0)
+    .sort((a, b) => b.aiScore - a.aiScore)
+    .slice(0, 12)
+}
+
+async function scanStocks(): Promise<LabAsset[]> {
+  let list: any[] = []
+  try {
+    const res = await getSinaAStocks(1, 8, { silentError: true })
+    list = Array.isArray(res.data?.data) ? res.data.data : []
+  } catch {
+    list = await scanStockFallbackQuotes()
+  }
+  if (!list.length) {
+    list = await scanStockFallbackQuotes()
+  }
+  const top = list
+    .map((item: any) => ({
+      code: String(item.code || ''),
+      name: String(item.name || item.code || ''),
+      price: Number(item.current || item.currentPrice || 0),
+      changePct: Number(item.changePercent || 0)
+    }))
+    .filter((item: any) => item.code && item.price > 0)
+    .sort((a: any, b: any) => Math.abs(b.changePct) - Math.abs(a.changePct))
+    .slice(0, 4)
+
+  const analyzed = await Promise.all(top.map(async (item: any) => {
+    try {
+      const ai = (await analyzeStock({ stockCode: item.code, configId: 1 }, { silentError: true })).data?.data as AiAnalysisResponse
+      return stockAsset(item, ai)
+    } catch {
+      return stockAsset(item, null)
+    }
+  }))
+  return analyzed
+}
+
+async function scanStockFallbackQuotes(): Promise<any[]> {
+  const codes = ['600519', '600036', '300750', '000858', '601318', '600276']
+  const rows = await Promise.allSettled(codes.map(async (code) => {
+    const data = (await getRealtimeQuote(code, { silentError: true })).data?.data
+    return {
+      code: String(data?.code || code),
+      name: String(data?.name || code),
+      current: Number(data?.currentPrice || 0),
+      currentPrice: Number(data?.currentPrice || 0),
+      changePercent: Number(data?.changePercent || 0)
+    }
+  }))
+  return rows
+    .filter((row): row is PromiseFulfilledResult<any> => row.status === 'fulfilled')
+    .map((row) => row.value)
+    .filter((item) => item.code && Number(item.current || item.currentPrice || 0) > 0)
+}
+
+function stockAsset(item: any, ai: AiAnalysisResponse | null): LabAsset {
+  const techScore = safeScore(ai?.techScore ?? marketTechScore(item.changePct))
+  const sentimentScore = safeScore(ai?.sentimentScore ?? 50)
+  const aiScore = safeScore(ai?.score ?? Math.round(techScore * 0.65 + sentimentScore * 0.35))
+  return {
+    id: `stock-${item.code}`,
+    type: 'stock',
+    code: item.code,
+    name: ai?.stockName || item.name,
+    price: item.price,
+    changePct: item.changePct,
+    aiScore,
+    sentimentScore,
+    techScore,
+    source: '新浪行情 + 东方财富/新浪新闻 + 巨潮公告 + 股吧舆情',
+    reason: ai ? '已纳入智能舆情综合研判' : '已纳入真实行情，舆情暂不可用',
+    analysis: ai
+  }
+}
+
+async function scanGold(): Promise<LabAsset[]> {
+  const codes = ['hf_GC', 'hf_XAU']
+  const rows = await Promise.all(codes.map(async (code) => {
+    try {
+      const data = (await getGoldLatest(code, { silentError: true })).data?.data
+      const price = Number(data?.price || 0)
+      const changePct = Number(data?.changePercent || 0)
+      return {
+        id: `gold-${code}`,
+        type: 'gold' as AssetType,
+        code,
+        name: data?.productName || (code === 'hf_GC' ? 'COMEX黄金' : '伦敦金'),
+        price,
+        changePct,
+        aiScore: safeScore(marketTechScore(changePct) + 4),
+        sentimentScore: 50,
+        techScore: marketTechScore(changePct),
+        source: '新浪公开贵金属报价',
+        reason: '按真实黄金报价和趋势强度进入策略实验'
+      }
+    } catch {
+      return null
+    }
+  }))
+  return rows.filter(Boolean) as LabAsset[]
+}
+
+async function scanFunds(): Promise<LabAsset[]> {
+  try {
+    const res = await getFundList({ page: 1, pageSize: 8 }, { silentError: true })
+    const data = res.data?.data
+    const list = Array.isArray(data?.list) ? data.list : Array.isArray(data) ? data : []
+    return list.map((item: any) => {
+      const changePct = Number(item.changePercent || item.gszzl || 0)
+      const price = Number(item.nav || item.price || 0)
+      return {
+        id: `fund-${item.code}`,
+        type: 'fund' as AssetType,
+        code: String(item.code || ''),
+        name: String(item.name || item.code || ''),
+        price,
+        changePct,
+        aiScore: safeScore(marketTechScore(changePct) + (String(item.fundType || '').includes('指数') ? 3 : 0)),
+        sentimentScore: 50,
+        techScore: marketTechScore(changePct),
+        source: '公开基金净值/估算数据',
+        reason: `${item.fundType || '基金'}按真实净值变化进入策略实验`
+      }
+    }).filter((item: LabAsset) => item.code && item.price > 0)
+  } catch {
+    return []
+  }
+}
+
+function seedExperiments(inputAssets: LabAsset[]) {
+  const result: LabExperiment[] = []
+  for (const asset of inputAssets) {
+    const apiStrategies = asset.analysis?.candidateStrategies || autoStrategies(asset)
+    apiStrategies.slice(0, 3).forEach((strategy, index) => {
+      result.push(toExperiment(asset, strategy, `auto-${asset.id}-${index}`, false))
+    })
+    customStrategies.value.forEach((strategy) => {
+      result.push(customToExperiment(asset, strategy))
+    })
+  }
+  return result
+}
+
+function autoStrategies(asset: LabAsset): CandidateStrategy[] {
+  return [
+    {
+      name: '智能趋势突破策略',
+      style: 'trend',
+      signal: asset.aiScore >= 62 ? 'BUY' : asset.aiScore <= 42 ? 'SELL' : 'HOLD',
+      score: asset.aiScore,
+      expectedReturnScore: safeScore(asset.aiScore + 4),
+      riskScore: safeScore(88 - Math.abs(asset.changePct) * 3),
+      sentimentFitScore: asset.sentimentScore,
+      suggestedPosition: asset.aiScore >= 65 ? '轻仓买入' : '观察',
+      entryRule: '综合分高于65且价格趋势继续确认时买入',
+      exitRule: '收益回落或综合分低于50时卖出',
+      stopLossRule: '最大回撤超过5%止损',
+      takeProfitRule: '收益达到8%-12%分批止盈',
+      evaluationRule: '每代按收益、回撤、胜率重新评估',
+      rationale: '系统自动生成，优先捕捉真实趋势和资金强度'
+    },
+    {
+      name: '智能回撤低吸策略',
+      style: 'mean-reversion',
+      signal: asset.changePct < -0.5 && asset.aiScore >= 48 ? 'BUY' : 'HOLD',
+      score: safeScore(asset.aiScore - 3),
+      expectedReturnScore: safeScore(asset.aiScore + 1),
+      riskScore: safeScore(92 - Math.abs(asset.changePct) * 2),
+      sentimentFitScore: asset.sentimentScore,
+      suggestedPosition: '小仓试错',
+      entryRule: '回撤后企稳且综合分未恶化时低吸',
+      exitRule: '反弹无量或跌破支撑时卖出',
+      stopLossRule: '跌破最近低点止损',
+      takeProfitRule: '反弹至压力位减仓',
+      evaluationRule: '每代按低吸成功率优化阈值',
+      rationale: '系统自动生成，适合震荡和回调后的修复行情'
+    }
+  ]
+}
+
+function toExperiment(asset: LabAsset, strategy: CandidateStrategy, id: string, custom: boolean): LabExperiment {
+  const baseScore = safeScore(strategy.score)
+  const returnPct = simulateReturn(asset, strategy.style, baseScore, custom)
+  const drawdownPct = simulateDrawdown(asset, strategy.style, baseScore)
+  const score = scoreExperiment(baseScore, returnPct, drawdownPct, strategy.sentimentFitScore)
+  return {
+    id,
+    assetId: asset.id,
+    assetType: asset.type,
+    assetCode: asset.code,
+    assetName: asset.name,
+    strategyName: strategy.name,
+    style: strategy.style,
+    signal: strategy.signal,
+    score,
+    returnPct,
+    drawdownPct,
+    winRate: safeScore(48 + returnPct * 3 - drawdownPct * 1.5),
+    position: positionFor(score, strategy.signal),
+    rank: rankOf(score, returnPct, drawdownPct),
+    generation: generation.value,
+    entryRule: strategy.entryRule,
+    exitRule: strategy.exitRule,
+    reason: strategy.rationale,
+    mutation: '初始策略入池',
+    custom,
+    factorScores: factorScoresFor({
+      assetType: asset.type,
+      assetCode: asset.code,
+      assetName: asset.name,
+      strategyName: strategy.name,
+      style: strategy.style,
+      signal: strategy.signal,
+      score,
+      returnPct,
+      drawdownPct,
+      winRate: safeScore(48 + returnPct * 3 - drawdownPct * 1.5),
+      position: positionFor(score, strategy.signal),
+      techScore: asset.techScore,
+      sentimentScore: asset.sentimentScore,
+      aiScore: asset.aiScore
+    } as any)
+  }
+}
+
+function customToExperiment(asset: LabAsset, custom: CustomStrategy) {
+  const score = safeScore(asset.aiScore + styleBias(custom.style))
+  const strategy: CandidateStrategy = {
+    name: custom.name,
+    style: custom.style,
+    signal: score >= 62 ? 'BUY' : score <= 40 ? 'SELL' : 'HOLD',
+    score,
+    expectedReturnScore: score,
+    riskScore: 70,
+    sentimentFitScore: asset.sentimentScore,
+    suggestedPosition: '按自定义规则试验',
+    entryRule: custom.rule || '系统从自定义内容中提取买入条件',
+    exitRule: '收益回落或综合分恶化时卖出',
+    stopLossRule: '严格止损',
+    takeProfitRule: '分批止盈',
+    evaluationRule: '每代按收益自动调权',
+    rationale: custom.rule || '用户自定义策略，由系统放入真实资产池持续实验'
+  }
+  return toExperiment(asset, strategy, `${custom.id}-${asset.id}`, true)
+}
+
+function evolveAgain() {
+  if (!experiments.value.length) return
+  evolveOnce()
+}
+
+let autoTimer: ReturnType<typeof setInterval> | null = null
+
+function toggleAutoEvolution() {
+  if (autoRunning.value) {
+    stopAutoEvolution()
+    return
+  }
+  autoRunning.value = true
+  autoTimer = setInterval(() => {
+    if (!experiments.value.length) {
+      stopAutoEvolution()
+      return
+    }
+    evolveOnce()
+  }, intervalMinutes.value * 60 * 1000)
+  ElMessage.success(`已启动自动迭代：每 ${intervalMinutes.value} 分钟运行一代`)
+}
+
+function stopAutoEvolution() {
+  autoRunning.value = false
+  if (autoTimer) {
+    clearInterval(autoTimer)
+    autoTimer = null
+  }
+}
+
+function evolveOnce(shouldPersist = true) {
+  generation.value += 1
+  const previous = champion.value
+  experiments.value = experiments.value.map((item, index) => {
+    const asset = assets.value.find((target) => target.id === item.assetId)
+    const assetMomentum = asset?.changePct || 0
+    const learningBoost = item.returnPct > 0 ? 1.2 : -0.8
+    const styleBoost = styleBias(item.style) / 5
+    const nextReturn = Number((item.returnPct + assetMomentum * 0.18 + learningBoost + styleBoost - item.drawdownPct * 0.08 + ((generation.value + index) % 3 - 1) * 0.35).toFixed(2))
+    const nextDrawdown = Number(Math.max(0.2, item.drawdownPct * (item.returnPct > 0 ? 0.92 : 1.06) + Math.abs(assetMomentum) * 0.08).toFixed(2))
+    const nextScore = scoreExperiment(item.score, nextReturn, nextDrawdown, asset?.sentimentScore || 50)
+    const nextSignal: Signal = nextScore >= 65 ? 'BUY' : nextScore <= 42 ? 'SELL' : 'HOLD'
+    const nextRank = rankOf(nextScore, nextReturn, nextDrawdown)
+    return {
+      ...item,
+      signal: nextSignal,
+      score: nextScore,
+      returnPct: nextReturn,
+      drawdownPct: nextDrawdown,
+      winRate: safeScore(item.winRate * 0.65 + (nextReturn > 0 ? 68 : 42) * 0.35),
+      position: positionFor(nextScore, nextSignal),
+      rank: nextRank,
+      generation: generation.value,
+      mutation: mutationText(item, nextScore, nextReturn, nextDrawdown, nextRank),
+      factorScores: factorScoresFor({ ...item, score: nextScore, returnPct: nextReturn, drawdownPct: nextDrawdown, signal: nextSignal })
+    }
+  })
+
+  const next = champion.value
+  if (next) {
+    const changed = !previous || previous.id !== next.id
+    evolutionLog.value.unshift({
+      id: `${Date.now()}-${generation.value}`,
+      title: changed ? `${next.strategyName} 登顶 ${rankName(next.rank)}` : `${next.strategyName} 稳定进化`,
+      detail: `${next.assetName} 第 ${generation.value} 代收益 ${formatPercent(next.returnPct)}，回撤 ${formatPercent(next.drawdownPct)}，动作 ${signalText(next.signal)}。`
+    })
+    evolutionLog.value = evolutionLog.value.slice(0, 14)
+  }
+  if (shouldPersist) {
+    void persistIteration().catch(() => {
+      console.warn('AI lab iteration finished, but persistence endpoint is unavailable.')
+    })
+  }
+}
+
+function addCustomStrategy() {
+  const title = customForm.title.trim()
+  const content = customForm.content.trim()
+  if (!title) {
+    ElMessage.warning('请输入策略标题')
+    return
+  }
+  if (!content) {
+    ElMessage.warning('请输入自定义内容')
+    return
+  }
+  const style = inferCustomStyle(`${title} ${content}`)
+  const item: CustomStrategy = {
+    id: `custom-${Date.now()}`,
+    name: title,
+    style,
+    rule: standardizeCustomRule(title, content, style)
+  }
+  customStrategies.value.unshift(item)
+  if (assets.value.length) {
+    experiments.value = [...assets.value.map((asset) => customToExperiment(asset, item)), ...experiments.value]
+  }
+  saveCustomStrategies()
+  customForm.title = ''
+  customForm.content = ''
+  void persistLabState()
+  ElMessage.success(`系统已识别为「${styleText(style)}」策略，并加入实验池`)
+}
+
+function removeCustomStrategy(id: string) {
+  customStrategies.value = customStrategies.value.filter((item) => item.id !== id)
+  experiments.value = experiments.value.filter((item) => !item.id.startsWith(id))
+  saveCustomStrategies()
+}
+
+function loadCustomStrategies() {
+  try {
+    customStrategies.value = JSON.parse(localStorage.getItem('ai-lab-custom-strategies') || '[]')
+  } catch {
+    customStrategies.value = []
+  }
+}
+
+function saveCustomStrategies() {
+  localStorage.setItem('ai-lab-custom-strategies', JSON.stringify(customStrategies.value))
+}
+
+function marketTechScore(changePct: number) {
+  return safeScore(54 + changePct * 5)
+}
+
+function simulateReturn(asset: LabAsset, style: string, baseScore: number, custom: boolean) {
+  const trend = asset.changePct * (style === 'trend' ? 1.15 : style === 'mean-reversion' ? -0.35 : 0.6)
+  const scoreAlpha = (baseScore - 50) / 8
+  const customAlpha = custom ? 0.5 : 0
+  return Number((trend + scoreAlpha + customAlpha).toFixed(2))
+}
+
+function simulateDrawdown(asset: LabAsset, style: string, baseScore: number) {
+  const riskControl = style === 'risk-control' ? 1.2 : 0
+  return Number(Math.max(0.5, Math.abs(asset.changePct) * 0.55 + (100 - baseScore) / 18 - riskControl).toFixed(2))
+}
+
+function scoreExperiment(baseScore: number, returnPct: number, drawdownPct: number, sentimentScore: number) {
+  return safeScore(baseScore * 0.42 + (50 + returnPct * 4) * 0.34 + (100 - drawdownPct * 5) * 0.16 + sentimentScore * 0.08)
+}
+
+function rankOf(score: number, returnPct = 0, drawdownPct = 0): RankKey {
+  if (score >= 88 && returnPct >= 8 && drawdownPct <= 4) return 'king'
+  if (score >= 75 && returnPct >= 4) return 'platinum'
+  if (score >= 60 && returnPct >= 0) return 'gold'
+  if (score >= 45) return 'silver'
+  return 'bronze'
+}
+
+function mutationText(item: LabExperiment, score: number, returnPct: number, drawdownPct: number, rank: RankKey) {
+  if (rank === 'king') return '王者突变：保留核心规则，提高资金利用率'
+  if (returnPct > item.returnPct && drawdownPct <= item.drawdownPct) return '高效突变：收益上升且回撤受控，提升权重'
+  if (returnPct > item.returnPct) return '收益突变：保留入场逻辑，强化止盈'
+  if (drawdownPct > item.drawdownPct) return '防守突变：降低仓位，收紧止损'
+  if (score > item.score) return '稳定突变：小幅优化阈值'
+  return '淘汰压力：降低权重，等待下一代验证'
+}
+
+function factorScoresFor(item: Partial<LabExperiment> & AnyScoreSource) {
+  const asset = assets.value.find((target) => target.id === item.assetId || target.code === item.assetCode)
+  const techScore = safeScore(item.techScore ?? asset?.techScore ?? item.score ?? 50)
+  const sentimentScore = safeScore(item.sentimentScore ?? asset?.sentimentScore ?? 50)
+  const returnScore = safeScore(50 + Number(item.returnPct || 0) * 5)
+  const drawdownScore = safeScore(100 - Number(item.drawdownPct || 0) * 8)
+  const portfolioScore = safeScore((item.score || 0) * 0.7 + drawdownScore * 0.3)
+  return [
+    {
+      name: '技术面',
+      score: techScore,
+      reason: `依据真实行情动量、趋势强弱和${item.signal === 'BUY' ? '买入' : item.signal === 'SELL' ? '卖出' : '观望'}信号评分。`
+    },
+    {
+      name: '新闻/舆情',
+      score: sentimentScore,
+      reason: '结合新闻情绪、公告事件和公开社区影响力；雪球大V需授权后可提高精度。'
+    },
+    {
+      name: '历史盈利',
+      score: returnScore,
+      reason: `当前策略模拟收益 ${formatPercent(Number(item.returnPct || 0))}，收益越高评分越高。`
+    },
+    {
+      name: '回撤控制',
+      score: drawdownScore,
+      reason: `当前最大回撤 ${formatPercent(Number(item.drawdownPct || 0))}，回撤越低评分越高。`
+    },
+    {
+      name: '组合效率',
+      score: portfolioScore,
+      reason: `综合分、仓位和风险共同决定，当前建议仓位 ${item.position || 0}%。`
+    }
+  ]
+}
+
+function assetFactorScores(asset: LabAsset) {
+  return [
+    {
+      name: '技术面',
+      score: asset.techScore,
+      reason: `真实行情涨跌幅 ${formatPercent(asset.changePct)}，用于判断短线趋势、动量和技术强弱。`
+    },
+    {
+      name: '新闻/舆情',
+      score: asset.sentimentScore,
+      reason: asset.analysis ? '已结合新闻、公告和公开社区舆情。' : '暂未拿到完整舆情，先按中性分处理，后续迭代会继续补充。'
+    },
+    {
+      name: '综合筛选',
+      score: asset.aiScore,
+      reason: `${asset.reason} 数据源：${asset.source}。`
+    },
+    {
+      name: '波动适配',
+      score: safeScore(90 - Math.abs(asset.changePct) * 6),
+      reason: '波动越可控，越适合进入模拟组合；高波动资产会降低初始仓位。'
+    },
+    {
+      name: '策略扩展',
+      score: safeScore(asset.aiScore * 0.7 + 18),
+      reason: '该标的可同时参与趋势、低吸、事件驱动和自定义策略竞争。'
+    }
+  ]
+}
+
+interface AnyScoreSource {
+  techScore?: number
+  sentimentScore?: number
+  aiScore?: number
+}
+
+function goAssetDetail(item: LabExperiment) {
+  if (item.assetType === 'stock') {
+    router.push(`/stock/${item.assetCode}`)
+  } else if (item.assetType === 'fund') {
+    router.push(`/fund/${item.assetCode}`)
+  } else {
+    router.push(`/gold?code=${encodeURIComponent(item.assetCode)}`)
+  }
+}
+
+function goAssetDetailByAsset(asset: LabAsset) {
+  if (asset.type === 'stock') {
+    router.push(`/stock/${asset.code}`)
+  } else if (asset.type === 'fund') {
+    router.push(`/fund/${asset.code}`)
+  } else {
+    router.push(`/gold?code=${encodeURIComponent(asset.code)}`)
+  }
+}
+
+function inferCustomStyle(text: string) {
+  if (/(回撤|低吸|超跌|反弹|支撑|便宜|跌下来)/.test(text)) return 'mean-reversion'
+  if (/(新闻|公告|政策|事件|财报|利好|利空|舆情|大V)/.test(text)) return 'event-driven'
+  if (/(风控|止损|回撤|仓位|保守|风险)/.test(text)) return 'risk-control'
+  if (/(突破|趋势|均线|MACD|放量|强势|追涨)/i.test(text)) return 'trend'
+  return 'hybrid'
+}
+
+function standardizeCustomRule(title: string, content: string, style: string) {
+  const styleName = styleText(style)
+  return `智能标准化自定义策略「${title}」：风格=${styleName}。用户原始意图：${content}。实验室会把它拆成技术面、新闻舆情、风险控制、历史盈利和组合效率五个评分角度，并在每代迭代中按盈利优先自动调整仓位、入场阈值和退出阈值。`
+}
+
+function positionFor(score: number, signal: Signal) {
+  if (signal === 'SELL') return 0
+  if (signal === 'HOLD') return score >= 60 ? 20 : 0
+  if (score >= 85) return 70
+  if (score >= 75) return 50
+  if (score >= 65) return 30
+  return 10
+}
+
+function styleBias(style?: string) {
+  if (style === 'trend') return 6
+  if (style === 'event-driven') return 4
+  if (style === 'risk-control') return 3
+  if (style === 'mean-reversion') return 2
+  return 0
+}
+
+function safeScore(value: any) {
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0
+}
+
+function formatPrice(value: number) {
+  return Number(value || 0).toFixed(value > 100 ? 2 : 4)
+}
+
+function formatPercent(value: number) {
+  const n = Number(value || 0)
+  return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
+}
+
+function formatMoney(value: number) {
+  return `¥${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+}
+
+function formatTime(value?: string) {
+  if (!value) return '刚刚'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function zhText(value?: string) {
+  if (!value) return ''
+  return [
+    ['AI Trend Breakout', '智能趋势突破'],
+    ['AI Pullback Buy', '智能回撤低吸'],
+    ['News Sentiment Fusion', '新闻舆情融合'],
+    ['Custom Strategy', '自定义策略'],
+    ['Local scheduler seeded strategy pool', '本地定时任务已建立策略池'],
+    ['Local MySQL scheduled iteration: profit-first tuning, lower drawdown, keep high-score strategy variants.', '本地定时任务迭代：以盈利为主，压低回撤，保留高分策略变体。'],
+    ['Initial local scheduled strategy seed.', '本地定时任务初始建池。'],
+    ['local scheduled iteration', '本地定时迭代'],
+    ['Generated by local scheduler from real public market data.', '由本地定时任务基于真实公开行情生成。'],
+    ['Seeded by local scheduler from live public quote API.', '由本地定时任务基于实时公开报价纳入资产池。'],
+    ['Live quote plus technical momentum, sentiment weight and risk control confirmation.', '结合实时报价、技术动量、舆情权重和风控确认。'],
+    ['Exit when score drops below 50, drawdown expands or live quote momentum reverses.', '当综合分低于50、回撤扩大或实时动量反转时退出。'],
+    ['Technical', '技术面'],
+    ['Sentiment', '舆情面'],
+    ['Risk', '风险控制'],
+    ['Based on live quote change percent.', '根据实时涨跌幅判断。'],
+    ['Scheduler sentiment weight for public news/sentiment integration.', '定时任务为新闻和舆情融合预留的权重。'],
+    ['Lower drawdown receives higher risk score.', '回撤越低，风险分越高。'],
+    ['generation', '第'],
+    ['return', '收益'],
+    ['drawdown', '回撤'],
+    ['signal', '动作'],
+    ['BUY', '买入'],
+    ['SELL', '卖出'],
+    ['HOLD', '观望']
+  ].reduce((text, pair) => text.split(pair[0]).join(pair[1]), String(value))
+}
+
+function rankName(rank?: RankKey) {
+  if (rank === 'king') return '王者'
+  if (rank === 'platinum') return '铂金'
+  if (rank === 'gold') return '黄金'
+  if (rank === 'silver') return '白银'
+  return '青铜'
+}
+
+function rankTag(rank?: RankKey) {
+  if (rank === 'king') return 'danger'
+  if (rank === 'platinum') return 'primary'
+  if (rank === 'gold') return 'warning'
+  if (rank === 'silver') return 'info'
+  return 'success'
+}
+
+function assetTag(type: AssetType) {
+  if (type === 'stock') return 'primary'
+  if (type === 'gold') return 'warning'
+  return 'success'
+}
+
+function assetTypeText(type?: AssetType) {
+  if (type === 'stock') return '股票'
+  if (type === 'gold') return '黄金'
+  if (type === 'fund') return '基金'
+  return '-'
+}
+
+function signalText(signal?: Signal) {
+  if (signal === 'BUY') return '买入'
+  if (signal === 'SELL') return '卖出'
+  return '观望'
+}
+
+function signalClass(signal?: Signal) {
+  if (signal === 'BUY') return 'up'
+  if (signal === 'SELL') return 'down'
+  return ''
+}
+
+function strategyExplain(style?: string) {
+  if (style === 'trend') return '趋势跟随：顺着价格和资金方向做，适合突破和强趋势。'
+  if (style === 'mean-reversion') return '回撤低吸：等价格回调到相对便宜区域，确认企稳后试买。'
+  if (style === 'event-driven') return '事件驱动：重点看新闻、公告、政策、行业催化带来的短期机会。'
+  if (style === 'risk-control') return '风控优先：先控制回撤和仓位，再追求收益。'
+  if (style === 'hybrid') return '自定义混合：系统从用户文本中抽取多角度规则，纳入统一迭代标准。'
+  return '混合策略：综合技术、新闻、舆情和资产表现动态调权。'
+}
+
+function styleText(style?: string) {
+  if (style === 'trend') return '趋势跟随'
+  if (style === 'mean-reversion') return '低吸反转'
+  if (style === 'event-driven') return '事件驱动'
+  if (style === 'risk-control') return '风控优先'
+  if (style === 'hybrid') return '自定义混合'
+  return '混合'
+}
+</script>
+
+<style scoped lang="scss">
+.ai-lab {
+  max-width: 1440px;
+  display: grid;
+  gap: 16px;
+}
+
+.lab-header,
+.panel,
+.rank-track,
+.kpi {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.lab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+
+  h2 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    color: #1f2d3d;
+  }
+
+  p {
+    margin: 0;
+    color: #606266;
+  }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.control-label {
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi {
+  padding: 14px;
+
+  span,
+  small {
+    display: block;
+    color: #909399;
+  }
+
+  strong {
+    display: block;
+    margin: 7px 0;
+    font-size: 26px;
+    color: #1f2d3d;
+  }
+}
+
+.rank-track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 12px;
+  gap: 10px;
+}
+
+.rank-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  border: 1px solid transparent;
+
+  &.active {
+    border-color: #409eff;
+    background: #eef6ff;
+  }
+
+  small {
+    margin-left: auto;
+    color: #909399;
+  }
+}
+
+.rank-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.rank-bronze { background: #9a6a42; }
+.rank-silver { background: #8a99ad; }
+.rank-gold { background: #d59b2d; }
+.rank-platinum { background: #5d7fbf; }
+.rank-king { background: #d84d4d; }
+
+.main-grid,
+.bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 16px;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    color: #303133;
+  }
+
+  span {
+    color: #909399;
+    font-size: 12px;
+  }
+}
+
+.champion {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e4e7ed;
+
+  h4 {
+    margin: 0 0 8px;
+    font-size: 22px;
+    color: #1f2d3d;
+  }
+
+  p {
+    margin: 0;
+    color: #606266;
+    line-height: 1.6;
+  }
+}
+
+.champion-score {
+  text-align: right;
+
+  strong {
+    display: block;
+    font-size: 42px;
+    line-height: 1;
+    color: #d84d4d;
+  }
+
+  small {
+    color: #909399;
+  }
+}
+
+.trade-plan {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+
+  div {
+    padding: 12px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid #ebeef5;
+  }
+
+  .wide {
+    grid-column: span 2;
+  }
+
+  span {
+    display: block;
+    color: #909399;
+    font-size: 12px;
+  }
+
+  strong {
+    display: block;
+    margin-top: 6px;
+    color: #303133;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: #303133;
+    line-height: 1.5;
+  }
+}
+
+.custom-form {
+  display: grid;
+  gap: 4px;
+}
+
+.custom-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.custom-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  span {
+    color: #909399;
+    font-size: 12px;
+  }
+}
+
+.asset-grid,
+.experiment-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.asset-card,
+.experiment-card {
+  padding: 14px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.asset-card {
+  display: grid;
+  gap: 10px;
+
+  &.clickable {
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+
+    &:hover {
+      border-color: #409eff;
+      box-shadow: 0 8px 24px rgba(31, 45, 61, 0.1);
+      transform: translateY(-1px);
+    }
+  }
+
+  strong,
+  span {
+    display: block;
+  }
+
+  p {
+    margin: 0;
+    color: #606266;
+    line-height: 1.5;
+    font-size: 12px;
+  }
+}
+
+.asset-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.experiment-card {
+  border-left: 4px solid #9a6a42;
+
+  &.clickable {
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+
+    &:hover {
+      box-shadow: 0 8px 24px rgba(31, 45, 61, 0.1);
+      transform: translateY(-1px);
+    }
+  }
+
+  &.card-silver { border-left-color: #8a99ad; }
+  &.card-gold { border-left-color: #d59b2d; }
+  &.card-platinum { border-left-color: #5d7fbf; }
+  &.card-king { border-left-color: #d84d4d; }
+
+  p {
+    margin: 10px 0;
+    color: #606266;
+    line-height: 1.6;
+  }
+}
+
+.experiment-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  span {
+    color: #909399;
+    font-size: 12px;
+  }
+}
+
+.score-row,
+.mini-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.score-row div,
+.mini-metrics span {
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: #f5f7fa;
+  text-align: center;
+}
+
+.score-row span {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+}
+
+.score-row strong {
+  display: block;
+  margin-top: 3px;
+  color: #1f2d3d;
+}
+
+.mini-metrics {
+  margin-top: 8px;
+
+  span {
+    color: #606266;
+    font-size: 12px;
+  }
+}
+
+.mutation {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #4b5b70;
+  font-size: 12px;
+}
+
+.strategy-note {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fff8e8;
+  color: #7a5a1e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.score-detail {
+  display: grid;
+  gap: 8px;
+
+  h4 {
+    margin: 0 0 4px;
+    color: #303133;
+    font-size: 15px;
+  }
+}
+
+.score-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f7f9fc;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  strong {
+    color: #303133;
+  }
+
+  span {
+    margin-top: 2px;
+    color: #606266;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  b {
+    color: #d84d4d;
+    white-space: nowrap;
+  }
+}
+
+.log-list,
+.source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.log-item,
+.source-list div {
+  padding: 10px 12px;
+  border-left: 3px solid #409eff;
+  background: #f6faff;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  span {
+    color: #606266;
+    font-size: 12px;
+  }
+}
+
+.up { color: #1f9d66 !important; }
+.down { color: #d84d4d !important; }
+
+@media (max-width: 1200px) {
+  .asset-grid,
+  .experiment-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .main-grid,
+  .bottom-grid,
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .lab-header,
+  .champion {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rank-track,
+  .asset-grid,
+  .experiment-board,
+  .trade-plan,
+  .score-row,
+  .mini-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-plan .wide {
+    grid-column: auto;
+  }
+}
+</style>

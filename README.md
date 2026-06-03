@@ -57,7 +57,7 @@ mysql -u root -p
 source d:\TRAEFile\stock-trading-system\backend\sql\init.sql
 ```
 
-> 数据库配置：账号 `root`，密码 `Wu15250707866`，数据库名 `stock_trading`
+> 数据库配置：账号 `root`，密码请通过环境变量 `MYSQL_PASSWORD` 设置，数据库名 `stock_trading`
 
 ### 2. 启动后端服务
 

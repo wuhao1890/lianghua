@@ -1,0 +1,9 @@
+name = "lianghua-quant-trading"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "LIANGHUA_STATE"
+id = "eb4a7bf2b3bb4958891989042e66e3da"
+
+[vars]
+LIANGHUA_SYNC_TOKEN = "set-this-in-cloudflare-pages-environment"

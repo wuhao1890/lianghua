@@ -11,7 +11,7 @@
           :disabled="!sectors.length"
         >
           <el-icon><Refresh /></el-icon>
-          刷新AI分析
+          刷新智能分析
         </el-button>
       </div>
     </div>
@@ -21,7 +21,7 @@
       <div class="ai-banner-header">
         <div class="ai-title">
           <el-icon color="#33b86a" :size="20"><TrendCharts /></el-icon>
-          <span>AI 板块精选 Top 5</span>
+          <span>智能板块精选前五</span>
         </div>
         <span class="ai-time">分析时间: {{ aiAnalysis.analysisTime }}</span>
       </div>
@@ -83,7 +83,7 @@
       <el-skeleton :rows="3" animated />
       <div class="loading-hint">
         <el-icon class="is-loading" :size="18"><Loading /></el-icon>
-        <span>AI 正在分析板块数据，请稍候...</span>
+        <span>智能正在分析板块数据，请稍候...</span>
       </div>
     </div>
 
@@ -338,10 +338,10 @@ async function triggerAiAnalysis() {
     const res = await aiAnalyzeSectors()
     aiAnalysis.value = res.data?.data || null
     if (aiAnalysis.value) {
-      ElMessage.success('AI 板块分析完成')
+      ElMessage.success('智能板块分析完成')
     }
   } catch {
-    ElMessage.error('AI 分析失败，请稍后重试')
+    ElMessage.error('智能分析失败，请稍后重试')
     // 尝试获取最近的分析报告
     try {
       const reportRes = await getAiSectorReport()

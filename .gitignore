@@ -1,0 +1,15 @@
+node_modules/
+target/
+dist/
+.netlify/
+.wrangler/
+.idea/
+.vscode/
+logs/
+*.log
+*.err.log
+*.out.log
+*.png
+.env.local
+.env.*.local
+scripts/ai-lab-sync-iterate-v2.ps1

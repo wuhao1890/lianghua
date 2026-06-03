@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="header-left">
         <el-icon :size="22" color="#e6a23c"><Coin /></el-icon>
-        <span class="page-title">黄金中心</span>
+        <span class="page-title">金属中心</span>
         <el-tag size="small" type="warning" effect="plain" v-if="currentProductName">{{ currentProductName }}</el-tag>
       </div>
       <el-button type="primary" @click="loadAllData" :loading="loading">
@@ -15,7 +15,7 @@
     <!-- 产品切换栏 -->
     <el-card shadow="hover" class="switcher-card">
       <div class="switcher-bar">
-        <span class="switcher-label">黄金产品：</span>
+        <span class="switcher-label">金属品种：</span>
         <el-radio-group v-model="productCode" size="default">
           <el-radio-button
             v-for="(name, code) in productMap"
@@ -93,15 +93,15 @@
           <div class="header-left">
             <span class="section-title">K线走势</span>
             <el-radio-group v-model="klinePeriod" size="small" @change="onPeriodChange">
-              <el-radio-button label="5d">5日</el-radio-button>
-              <el-radio-button label="1m">1月</el-radio-button>
-              <el-radio-button label="3m">3月</el-radio-button>
+              <el-radio-button value="5d">5日</el-radio-button>
+              <el-radio-button value="1m">1月</el-radio-button>
+              <el-radio-button value="3m">3月</el-radio-button>
             </el-radio-group>
           </div>
           <div class="header-right">
             <el-checkbox-group v-model="klineIndicators" size="small">
-              <el-checkbox-button label="MA">MA</el-checkbox-button>
-              <el-checkbox-button label="BOLL">BOLL</el-checkbox-button>
+              <el-checkbox-button value="MA">MA</el-checkbox-button>
+              <el-checkbox-button value="BOLL">BOLL</el-checkbox-button>
             </el-checkbox-group>
           </div>
         </div>
@@ -118,11 +118,11 @@
           </div>
           <div class="header-right">
             <el-checkbox-group v-model="activeIndicators" size="small">
-              <el-checkbox-button label="MA">MA</el-checkbox-button>
-              <el-checkbox-button label="MACD">MACD</el-checkbox-button>
-              <el-checkbox-button label="RSI">RSI</el-checkbox-button>
-              <el-checkbox-button label="KDJ">KDJ</el-checkbox-button>
-              <el-checkbox-button label="BOLL">BOLL</el-checkbox-button>
+              <el-checkbox-button value="MA">MA</el-checkbox-button>
+              <el-checkbox-button value="MACD">MACD</el-checkbox-button>
+              <el-checkbox-button value="RSI">RSI</el-checkbox-button>
+              <el-checkbox-button value="KDJ">KDJ</el-checkbox-button>
+              <el-checkbox-button value="BOLL">BOLL</el-checkbox-button>
             </el-checkbox-group>
           </div>
         </div>
@@ -135,7 +135,7 @@
       <template #header>
         <div class="card-header">
           <div class="header-left">
-            <span class="section-title">AI 智能综合研判（含大V舆情）</span>
+            <span class="section-title">智能综合研判（含大V舆情）</span>
           </div>
           <el-button
             type="primary"
@@ -145,7 +145,7 @@
             @click="loadAiAnalysis"
           >
             <el-icon><Monitor /></el-icon>
-            {{ aiResult ? '刷新深度分析' : 'AI深度分析' }}
+            {{ aiResult ? '刷新深度分析' : '智能深度分析' }}
           </el-button>
         </div>
       </template>
@@ -155,7 +155,7 @@
         <!-- 评分栏 -->
         <div class="ai-score-bar">
           <div class="ai-signal">
-            <span class="label">AI综合信号</span>
+            <span class="label">智能综合信号</span>
             <el-tag :type="getAiSignalType(aiResult.signal)" size="large" effect="dark">
               {{ getAiSignalText(aiResult.signal) }}
             </el-tag>
@@ -194,7 +194,7 @@
         <div class="ai-section" v-if="aiResult.daVMajority">
           <h4 class="section-title-inner">
             <span>大V舆情分析（占综合评分的50%）</span>
-            <el-tag size="small" type="info" class="source-tip">以下内容由AI基于市场公开信息模拟生成</el-tag>
+            <el-tag size="small" type="info" class="source-tip">以下内容由智能模型基于市场公开信息生成</el-tag>
           </h4>
           <!-- 共识 -->
           <div class="consensus-card" :class="'consensus-' + aiResult.daVMajority.consensus">
@@ -248,17 +248,17 @@
       </template>
 
       <template v-else-if="!aiLoading">
-        <el-empty :image-size="60" description="点击右上角「AI分析」按钮，获取包含大V舆情的详细综合研判" />
+        <el-empty :image-size="60" description="点击右上角「智能分析」按钮，获取包含大V舆情的详细综合研判" />
         <div v-if="!hasAiConfig" class="no-config-hint">
           <el-alert title="提示" type="warning" :closable="false" show-icon>
-            <template #default>请先在"AI Agent"页面配置模型并保存，即可使用AI智能研判功能</template>
+            <template #default>请先在“智能助手”页面配置模型并保存，即可使用智能研判功能</template>
           </el-alert>
         </div>
       </template>
       <template v-else>
         <div class="ai-loading">
           <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-          <p>AI正在分析数据，请稍候（约10-30秒）...</p>
+          <p>智能模型正在分析数据，请稍候（约10到30秒）...</p>
         </div>
       </template>
     </el-card>
@@ -297,6 +297,29 @@ const productMap = ref<Record<string, string>>({
 const productCode = ref('hf_GC')
 const currentProductName = computed(() => productMap.value[productCode.value] || '')
 
+async function loadProducts() {
+  try {
+    const res = await getGoldProducts()
+    const data = res.data?.data
+    if (data && typeof data === 'object') {
+      productMap.value = data
+      if (!productMap.value[productCode.value]) {
+        productCode.value = Object.keys(productMap.value)[0] || 'hf_GC'
+      }
+    }
+  } catch {
+    productMap.value = {
+      hf_GC: '纽约黄金',
+      hf_XAU: '伦敦金',
+      hf_SI: '纽约白银',
+      hf_CAD: '伦铜',
+      hf_NID: '伦镍',
+      hf_ZSD: '伦锌',
+      hf_PBD: '伦铅'
+    }
+  }
+}
+
 // 实时行情
 const latestQuote = reactive<GoldQuote>({
   price: 0,
@@ -321,7 +344,7 @@ let klineChart: echarts.ECharts | null = null
 
 // 技术面信号
 const activeIndicators = ref<string[]>(['MA'])
-const signals = ref<TradeSignal[]>([])
+const signals = ref<any>([])
 
 // AI分析
 const aiResult = ref<AiAnalysisResponse | null>(null)
@@ -423,7 +446,7 @@ async function loadAllData() {
 }
 
 // ==================== K线图 ====================
-function buildKlineOption(): echarts.EChartsOption | null {
+function buildKlineOption(): any {
   if (historyList.value.length === 0) return null
 
   const dates = historyList.value.map(d => d.tradeDate)
@@ -709,7 +732,7 @@ async function loadAiAnalysis() {
     const res = await analyzeStock({
       stockCode: productCode.value,
       configId: enabledConfig.id,
-      customPrompt: `请分析黄金产品 ${currentProductName.value}（代码：${productCode.value}）的走势和投资建议`
+      customPrompt: `请分析金属品种 ${currentProductName.value}（代码：${productCode.value}）的走势和投资建议`
     })
     aiResult.value = res.data?.data || null
   } catch (e: any) {
@@ -795,7 +818,7 @@ function showDavDetail(op: any) {
     ${timeStr}
     <div style="margin-top:12px;font-size:12px;color:#909399">
       影响力：${stars}
-      <br/>来源：AI基于公开财经媒体报道和市场观点综合生成
+      <br/>来源：智能模型基于公开财经媒体报道和市场观点综合生成
     </div>`,
     dangerouslyUseHTMLString: true,
     confirmButtonText: '关闭'
@@ -806,6 +829,7 @@ function showDavDetail(op: any) {
 onMounted(async () => {
   loading.value = true
   try {
+    await loadProducts()
     await Promise.all([
       loadLatestPrice(),
       loadHistory(),

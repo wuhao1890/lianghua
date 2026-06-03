@@ -39,10 +39,37 @@ export function testModelConfig(id: number) {
   return request.post(`/ai/configs/${id}/test`)
 }
 
-export function analyzeStock(data: { stockCode: string; configId: number; customPrompt?: string }) {
-  return request.post('/ai/analyze', data, { timeout: 120000 })
+export function analyzeStock(data: { stockCode: string; configId: number; customPrompt?: string }, options: { silentError?: boolean } = {}) {
+  return request.post('/ai/analyze', data, {
+    timeout: 120000,
+    silentError: options.silentError
+  } as any)
+}
+
+export function getStockNews(stockCode: string) {
+  return request.get('/ai/news', { params: { stockCode } })
+}
+
+export function getNewsFeed(params: { stockCode?: string; keyword?: string; category?: string }) {
+  return request.get('/ai/news', { params })
 }
 
 export function getAnalysisHistory() {
   return request.get('/ai/history')
+}
+
+export function getAiLabState(options: { silentError?: boolean } = {}) {
+  return request.get('/ai/lab/state', { silentError: options.silentError } as any)
+}
+
+export function saveAiLabState(data: any, options: { silentError?: boolean } = {}) {
+  return request.post('/ai/lab/state', data, { silentError: options.silentError } as any)
+}
+
+export function saveAiLabIteration(data: any, options: { silentError?: boolean } = {}) {
+  return request.post('/ai/lab/iteration', data, { silentError: options.silentError } as any)
+}
+
+export function getAiLabIterations() {
+  return request.get('/ai/lab/iterations')
 }

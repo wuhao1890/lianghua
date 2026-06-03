@@ -5,8 +5,10 @@ export function searchStocks(keyword: string) {
   return request.get<ApiResponse<StockInfo[]>>('/stock/search', { params: { keyword } })
 }
 
-export function getRealtimeQuote(code: string) {
-  return request.get<ApiResponse<StockInfo>>(`/stock/realtime/${code}`)
+export function getRealtimeQuote(code: string, options: { silentError?: boolean } = {}) {
+  return request.get<ApiResponse<StockInfo>>(`/stock/realtime/${code}`, {
+    silentError: options.silentError
+  } as any)
 }
 
 export function getKlineData(code: string, period: string = 'daily') {
@@ -18,8 +20,11 @@ export function getStockList(params: { market: string; page: number; pageSize: n
 }
 
 // 新浪财经代理API（通过后端转发）
-export function getSinaAStocks(page: number = 1, pageSize: number = 20) {
-  return request.get('/stock/sina/a-stocks', { params: { page, pageSize } })
+export function getSinaAStocks(page: number = 1, pageSize: number = 20, options: { silentError?: boolean } = {}) {
+  return request.get('/stock/sina/a-stocks', {
+    params: { page, pageSize },
+    silentError: options.silentError
+  } as any)
 }
 
 export function getSinaUSStocks(page: number = 1, pageSize: number = 20) {

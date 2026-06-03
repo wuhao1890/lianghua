@@ -60,18 +60,18 @@
           <div class="header-left">
             <span class="title">净值走势</span>
             <el-radio-group v-model="navPeriod" size="small" @change="loadNavHistory">
-              <el-radio-button label="1M">1月</el-radio-button>
-              <el-radio-button label="3M">3月</el-radio-button>
-              <el-radio-button label="6M">6月</el-radio-button>
-              <el-radio-button label="1Y">1年</el-radio-button>
+              <el-radio-button value="1M">1月</el-radio-button>
+              <el-radio-button value="3M">3月</el-radio-button>
+              <el-radio-button value="6M">6月</el-radio-button>
+              <el-radio-button value="1Y">1年</el-radio-button>
             </el-radio-group>
           </div>
           <div class="header-right">
             <el-checkbox-group v-model="activeIndicators" size="small">
-              <el-checkbox-button label="MA">MA</el-checkbox-button>
-              <el-checkbox-button label="RSI">RSI</el-checkbox-button>
-              <el-checkbox-button label="KDJ">KDJ</el-checkbox-button>
-              <el-checkbox-button label="BOLL">BOLL</el-checkbox-button>
+              <el-checkbox-button value="MA">MA</el-checkbox-button>
+              <el-checkbox-button value="RSI">RSI</el-checkbox-button>
+              <el-checkbox-button value="KDJ">KDJ</el-checkbox-button>
+              <el-checkbox-button value="BOLL">BOLL</el-checkbox-button>
             </el-checkbox-group>
           </div>
         </div>
@@ -83,7 +83,7 @@
     <el-card shadow="hover" class="ai-card">
       <template #header>
         <div class="card-header">
-          <span class="title">AI 智能综合研判（含大V舆情）</span>
+          <span class="title">智能综合研判（含大V舆情）</span>
           <el-button
             v-if="fundCode"
             type="primary"
@@ -93,7 +93,7 @@
             @click="loadAiAnalysis"
           >
             <el-icon><Monitor /></el-icon>
-            {{ aiResult ? '刷新深度分析' : 'AI深度分析' }}
+            {{ aiResult ? '刷新深度分析' : '智能深度分析' }}
           </el-button>
         </div>
       </template>
@@ -103,7 +103,7 @@
         <!-- 评分栏 -->
         <div class="ai-score-bar">
           <div class="ai-signal">
-            <span class="label">AI综合信号</span>
+            <span class="label">智能综合信号</span>
             <el-tag :type="getAiSignalType(aiResult.signal)" size="large" effect="dark">
               {{ getAiSignalText(aiResult.signal) }}
             </el-tag>
@@ -142,7 +142,7 @@
         <div class="ai-section" v-if="aiResult.daVMajority">
           <h4 class="section-title">
             <span>大V舆情分析（占综合评分的50%）</span>
-            <el-tag size="small" type="info" class="source-tip">以下内容由AI基于市场公开信息模拟生成</el-tag>
+            <el-tag size="small" type="info" class="source-tip">以下内容由智能模型基于市场公开信息生成</el-tag>
           </h4>
           <!-- 共识 -->
           <div class="consensus-card" :class="'consensus-' + aiResult.daVMajority.consensus">
@@ -196,17 +196,17 @@
       </template>
 
       <template v-else-if="!aiLoading">
-        <el-empty :image-size="60" description="点击右上角「AI分析」按钮，获取包含大V舆情的详细综合研判" />
+        <el-empty :image-size="60" description="点击右上角「智能分析」按钮，获取包含大V舆情的详细综合研判" />
         <div v-if="!hasAiConfig" class="no-config-hint">
           <el-alert title="提示" type="warning" :closable="false" show-icon>
-            <template #default>请先在"AI Agent"页面配置模型并保存，即可使用AI智能研判功能</template>
+            <template #default>请先在“智能助手”页面配置模型并保存，即可使用智能研判功能</template>
           </el-alert>
         </div>
       </template>
       <template v-else>
         <div class="ai-loading">
           <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-          <p>AI正在分析数据，请稍候（约10-30秒）...</p>
+          <p>智能模型正在分析数据，请稍候（约10到30秒）...</p>
         </div>
       </template>
     </el-card>
@@ -579,7 +579,7 @@ function showDavDetail(op: any) {
     ${timeStr}
     <div style="margin-top:12px;font-size:12px;color:#909399">
       影响力：${stars}
-      <br/>来源：AI基于公开财经媒体报道和市场观点综合生成
+      <br/>来源：智能模型基于公开财经媒体报道和市场观点综合生成
     </div>`,
     dangerouslyUseHTMLString: true,
     confirmButtonText: '关闭'

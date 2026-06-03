@@ -16,8 +16,11 @@ export interface FundNavRecord {
   accNav: number
 }
 
-export function getFundList(params: { keyword?: string; fundType?: string; page?: number; pageSize?: number }) {
-  return request.get('/stock/fund/list', { params })
+export function getFundList(params: { keyword?: string; fundType?: string; page?: number; pageSize?: number }, options: { silentError?: boolean } = {}) {
+  return request.get('/stock/fund/list', {
+    params,
+    silentError: options.silentError
+  } as any)
 }
 
 export function getFundDetail(code: string) {

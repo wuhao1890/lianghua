@@ -25,6 +25,7 @@
         <module>stock-trade</module>
         <module>stock-analysis</module>
         <module>stock-ai</module>
+        <module>stock-server</module>
     </modules>
 
     <properties>

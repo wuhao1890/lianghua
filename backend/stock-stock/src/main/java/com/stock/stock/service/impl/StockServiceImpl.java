@@ -21,13 +21,10 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -83,7 +80,8 @@ public class StockServiceImpl extends ServiceImpl<StockInfoMapper, StockInfo> im
                 log.warn("获取实时行情失败, 使用数据库数据: {}", e.getMessage());
             }
 
-            return convertToDTO(stockInfo);
+            log.warn("股票{}没有可用实时行情，不返回数据库旧行情", code);
+            return null;
         }
 
         // 数据库中没有，尝试从API获取
@@ -104,48 +102,13 @@ public class StockServiceImpl extends ServiceImpl<StockInfoMapper, StockInfo> im
 
     @Override
     public List<KlineData> getKlineData(String code, String period, int limit) {
-        // 先从数据库查询
-        LambdaQueryWrapper<StockDaily> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(StockDaily::getStockCode, code);
-        wrapper.orderByDesc(StockDaily::getTradeDate);
-        wrapper.last("LIMIT " + limit);
-
-        List<StockDaily> dailyList = stockDailyMapper.selectList(wrapper);
-
-        // 如果数据不足，尝试生成模拟数据
-        if (dailyList == null || dailyList.size() < Math.min(limit, 60)) {
-            int need = Math.max(limit, 60);
-            log.info("股票{} K线数据不足({}条)，生成模拟数据，目标{}条", code,
-                    dailyList == null ? 0 : dailyList.size(), need);
-            generateMockKlineData(code, need);
-            // 重新查询
-            dailyList = stockDailyMapper.selectList(wrapper);
-            log.info("重新查询股票{}的K线数据，共{}条", code, dailyList.size());
+        List<KlineData> live = fetchEastMoneyKline(code, period, limit);
+        if (!live.isEmpty()) {
+            saveKlineData(code, live);
+            return live;
         }
-
-        List<KlineData> result = new ArrayList<>();
-        for (StockDaily daily : dailyList) {
-            KlineData kline = new KlineData();
-            kline.setDate(daily.getTradeDate().format(DateTimeFormatter.ISO_LOCAL_DATE));
-            kline.setOpen(daily.getOpenPrice());
-            kline.setHigh(daily.getHighPrice());
-            kline.setLow(daily.getLowPrice());
-            kline.setClose(daily.getClosePrice());
-            kline.setVolume(daily.getVolume());
-            kline.setTurnover(daily.getTurnover());
-
-            if (daily.getPrevClose() != null && daily.getPrevClose().compareTo(BigDecimal.ZERO) > 0) {
-                kline.setChangePercent(daily.getClosePrice()
-                        .subtract(daily.getPrevClose())
-                        .divide(daily.getPrevClose(), 4, RoundingMode.HALF_UP)
-                        .multiply(new BigDecimal("100")));
-            }
-            result.add(kline);
-        }
-
-        // 反转使日期从旧到新
-        java.util.Collections.reverse(result);
-        return result;
+        log.warn("股票{}未获取到真实K线数据，返回空列表，不使用模拟行情", code);
+        return new ArrayList<>();
     }
 
     @Override
@@ -279,77 +242,72 @@ public class StockServiceImpl extends ServiceImpl<StockInfoMapper, StockInfo> im
         }
     }
 
-    /**
-     * 当数据库无K线数据时，使用随机游走算法生成模拟K线数据
-     * 从limit个交易日之前开始，跳过周末，生成每日OHLCV数据并写入stock_daily表
-     */
-    private void generateMockKlineData(String code, int limit) {
-        // 尝试获取当前实时价格作为基准
-        BigDecimal basePrice = BigDecimal.valueOf(50.00);
+    private List<KlineData> fetchEastMoneyKline(String code, String period, int limit) {
+        List<KlineData> result = new ArrayList<>();
         try {
-            StockDTO quote = getAStockQuote(code);
-            if (quote != null && quote.getCurrentPrice() != null
-                    && quote.getCurrentPrice().compareTo(BigDecimal.ZERO) > 0) {
-                basePrice = quote.getCurrentPrice();
+            String secid = eastMoneySecId(code);
+            String klt = eastMoneyPeriod(period);
+            String url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+                    + "?secid=" + secid
+                    + "&fields1=f1,f2,f3,f4,f5,f6"
+                    + "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+                    + "&klt=" + klt
+                    + "&fqt=1&end=20500101&lmt=" + Math.max(1, limit);
+            Request request = new Request.Builder()
+                    .url(url)
+                    .addHeader("Referer", "https://quote.eastmoney.com")
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .build();
+
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (response.body() == null || !response.isSuccessful()) {
+                    return result;
+                }
+                JSONObject json = JSON.parseObject(response.body().string());
+                JSONObject data = json.getJSONObject("data");
+                if (data == null) {
+                    return result;
+                }
+                JSONArray klines = data.getJSONArray("klines");
+                if (klines == null) {
+                    return result;
+                }
+                for (int i = 0; i < klines.size(); i++) {
+                    String[] fields = klines.getString(i).split(",");
+                    if (fields.length < 7) {
+                        continue;
+                    }
+                    KlineData kline = new KlineData();
+                    kline.setDate(fields[0]);
+                    kline.setOpen(new BigDecimal(fields[1]));
+                    kline.setClose(new BigDecimal(fields[2]));
+                    kline.setHigh(new BigDecimal(fields[3]));
+                    kline.setLow(new BigDecimal(fields[4]));
+                    kline.setVolume(Long.parseLong(fields[5]));
+                    kline.setTurnover(new BigDecimal(fields[6]));
+                    if (fields.length > 8 && !fields[8].isEmpty() && !"-".equals(fields[8])) {
+                        kline.setChangePercent(new BigDecimal(fields[8]));
+                    }
+                    result.add(kline);
+                }
             }
         } catch (Exception e) {
-            log.warn("获取股票{}实时价格失败，使用默认基准价50.00", code);
+            log.warn("获取东方财富K线失败 {}: {}", code, e.getMessage());
         }
+        return result;
+    }
 
-        Random rand = new Random(code.hashCode()); // 固定种子使每次生成一致
-        LocalDate today = LocalDate.now();
-        BigDecimal price = basePrice;
-        int tradingDays = 0;
-        int daysBack = 0;
-
-        while (tradingDays < limit) {
-            LocalDate date = today.minusDays(daysBack);
-            daysBack++;
-
-            // 跳过周末（非交易日）
-            if (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY) {
-                continue;
-            }
-
-            // 检查该日数据是否已存在
-            StockDaily exist = stockDailyMapper.selectOne(
-                    new LambdaQueryWrapper<StockDaily>()
-                            .eq(StockDaily::getStockCode, code)
-                            .eq(StockDaily::getTradeDate, date));
-            if (exist != null) {
-                tradingDays++;
-                continue;
-            }
-
-            // 随机游走: -4.5% ~ +4.5% 的日涨跌幅
-            double change = (rand.nextDouble() - 0.5) * 0.09;
-            BigDecimal close = price.multiply(BigDecimal.valueOf(1 + change));
-
-            // 生成OHLCV
-            BigDecimal open = price;
-            BigDecimal high = open.max(close).multiply(BigDecimal.valueOf(1 + rand.nextDouble() * 0.015));
-            BigDecimal low = open.min(close).multiply(BigDecimal.valueOf(1 - rand.nextDouble() * 0.015));
-            long volume = (long) (rand.nextDouble() * 8000000 + 2000000);
-            BigDecimal turnover = close.multiply(BigDecimal.valueOf(volume));
-
-            // 保存到数据库
-            StockDaily daily = new StockDaily();
-            daily.setStockCode(code);
-            daily.setTradeDate(date);
-            daily.setOpenPrice(open.setScale(2, RoundingMode.HALF_UP));
-            daily.setHighPrice(high.setScale(2, RoundingMode.HALF_UP));
-            daily.setLowPrice(low.setScale(2, RoundingMode.HALF_UP));
-            daily.setClosePrice(close.setScale(2, RoundingMode.HALF_UP));
-            daily.setVolume(volume);
-            daily.setTurnover(turnover.setScale(2, RoundingMode.HALF_UP));
-            daily.setPrevClose(price.setScale(2, RoundingMode.HALF_UP));
-            stockDailyMapper.insert(daily);
-
-            price = close;
-            tradingDays++;
+    private String eastMoneySecId(String code) {
+        if (code.startsWith("6") || code.startsWith("5")) {
+            return "1." + code;
         }
+        return "0." + code;
+    }
 
-        log.info("为股票{}生成了{}条模拟K线数据，基准价={}", code, limit, basePrice);
+    private String eastMoneyPeriod(String period) {
+        if ("weekly".equalsIgnoreCase(period)) return "102";
+        if ("monthly".equalsIgnoreCase(period)) return "103";
+        return "101";
     }
 
     /**
@@ -381,6 +339,12 @@ public class StockServiceImpl extends ServiceImpl<StockInfoMapper, StockInfo> im
             dto.setLowPrice(new BigDecimal(fields[5]));
             dto.setVolume(Long.parseLong(fields[8]));
             dto.setTurnover(new BigDecimal(fields[9]));
+            if (dto.getCurrentPrice().compareTo(BigDecimal.ZERO) <= 0
+                    || dto.getOpenPrice().compareTo(BigDecimal.ZERO) <= 0
+                    || dto.getVolume() == null
+                    || dto.getVolume() <= 0) {
+                return null;
+            }
 
             // 计算涨跌幅
             if (dto.getPrevClose().compareTo(BigDecimal.ZERO) > 0) {

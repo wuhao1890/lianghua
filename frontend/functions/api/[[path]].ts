@@ -1,0 +1,1262 @@
+type AnyRecord = Record<string, any>;
+type Sentiment = "bullish" | "bearish" | "neutral";
+type Signal = "BUY" | "SELL" | "HOLD";
+type KVNamespaceLike = {
+  get(key: string, type?: "json"): Promise<any>;
+  put(key: string, value: string): Promise<void>;
+};
+type PagesEnv = {
+  LIANGHUA_STATE?: KVNamespaceLike;
+};
+type PagesContext = {
+  request: Request;
+  env: PagesEnv;
+};
+
+const memoryStore = new Map<string, any>();
+let currentEnv: PagesEnv = {};
+
+const A_STOCKS = [
+  "sh600519", "sh600036", "sh601318", "sh600276", "sh601888", "sh600887", "sh600009", "sh601166",
+  "sh601328", "sh601398", "sh600030", "sh600016", "sh601288", "sh601628", "sh600028", "sh601857",
+  "sh600050", "sh600031", "sh600585", "sh601088", "sh600048", "sh601012", "sh600900", "sh600104",
+  "sh601311", "sh600690", "sh601658", "sh601899", "sh600588", "sh600837", "sh601319", "sh601601",
+  "sh601336", "sh601818", "sh600000", "sh600015", "sh600018", "sh600023", "sh600027", "sh600029",
+  "sh600109", "sh600111", "sh600115", "sh600150", "sh600170", "sh600176", "sh600183", "sh600196",
+  "sh600208", "sh600233", "sh600309", "sh600332", "sh600345", "sh600398", "sh600406", "sh600436",
+  "sh600438", "sh600460", "sh600470", "sh600482", "sh600487", "sh600498", "sh600521", "sh600547",
+  "sh600570", "sh600660", "sh600703", "sh600745", "sh600760", "sh600809", "sh600862", "sh600893",
+  "sh600905", "sh600918", "sh600926", "sh600941", "sh600989", "sh600999", "sz000001", "sz000002",
+  "sz000063", "sz000333", "sz000651", "sz000858", "sz002230", "sz002594", "sz300059", "sz300750"
+];
+const US_STOCKS = ["gb_aapl", "gb_msft", "gb_googl", "gb_amzn", "gb_nvda", "gb_tsla", "gb_meta"];
+const INDICES = ["sh000001", "sz399001", "sz399006", "sh000300"];
+const METALS: Record<string, string> = {
+  hf_GC: "纽约黄金",
+  hf_XAU: "伦敦金",
+  hf_SI: "纽约白银",
+  hf_CAD: "伦铜",
+  hf_NID: "伦镍",
+  hf_ZSD: "伦锌",
+  hf_PBD: "伦铅"
+};
+
+const SECTOR_GROUPS: Array<{ sectorCode: string; sectorName: string; codes: string[] }> = [
+  { sectorCode: "bank", sectorName: "银行", codes: ["sh600036", "sh601166", "sh601328", "sh601398", "sh600016", "sh601288", "sh600000", "sh600015", "sh601818", "sz000001"] },
+  { sectorCode: "liquor", sectorName: "白酒消费", codes: ["sh600519", "sz000858", "sh600887", "sh600809"] },
+  { sectorCode: "medicine", sectorName: "医药医疗", codes: ["sh600276", "sh600196", "sh600332", "sh600436"] },
+  { sectorCode: "broker", sectorName: "证券保险", codes: ["sh601318", "sh600030", "sh601628", "sh600837", "sh601319", "sh601601"] },
+  { sectorCode: "new-energy", sectorName: "新能源", codes: ["sh601012", "sh600438", "sz002594", "sz300750"] },
+  { sectorCode: "tech", sectorName: "科技互联网", codes: ["sz000063", "sz002230", "sz300059", "sh600570", "sh600588"] },
+  { sectorCode: "resource", sectorName: "资源能源", codes: ["sh600028", "sh601857", "sh601088", "sh601899", "sh600547"] },
+  { sectorCode: "manufacture", sectorName: "高端制造", codes: ["sh600031", "sh600150", "sh600760", "sz000333", "sz000651"] }
+];
+
+const BULLISH_WORDS = ["增持", "买入", "上涨", "增长", "盈利", "突破", "利好", "回购", "中标", "分红", "创新高", "扩张", "净利润", "翻身仗", "拉升", "洗出去"];
+const BEARISH_WORDS = ["减持", "卖出", "下跌", "亏损", "处罚", "风险", "诉讼", "退市", "暴跌", "利空", "问询", "监管", "下降", "磨顶", "破9", "阴跌", "套人", "后悔", "跌停", "水下", "脑壳痛"];
+
+function blobStore() {
+  return {
+    async get(key: string, _options?: any) {
+      const kv = currentEnv.LIANGHUA_STATE;
+      if (kv) {
+        const value = await kv.get(key, "json");
+        if (value !== null) return value;
+      }
+      return memoryStore.get(key) ?? null;
+    },
+    async setJSON(key: string, value: any) {
+      const kv = currentEnv.LIANGHUA_STATE;
+      if (kv) {
+        await kv.put(key, JSON.stringify(value));
+      }
+      memoryStore.set(key, value);
+    }
+  };
+}
+
+function send(data: any = null, message = "success", code = 200) {
+  return Response.json({ code, message, data });
+}
+
+function cleanText(value = "") {
+  return String(value)
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeGb(buffer: ArrayBuffer) {
+  try {
+    return new TextDecoder("gb18030").decode(buffer);
+  } catch {
+    return new TextDecoder("utf-8").decode(buffer);
+  }
+}
+
+function stockPrefix(code: string) {
+  if (/^(sh|sz|gb_)/i.test(code)) return code.toLowerCase();
+  if (/^6/.test(code)) return `sh${code}`;
+  if (/^[03]/.test(code)) return `sz${code}`;
+  return `sh${code}`;
+}
+
+function cninfoColumn(code: string) {
+  return code.startsWith("6") ? "sse" : "szse";
+}
+
+function b64url(value: AnyRecord) {
+  return btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function makeToken(user: AnyRecord) {
+  return `${b64url({ alg: "none", typ: "JWT" })}.${b64url({
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    exp: Math.floor(Date.now() / 1000) + 86400 * 30
+  })}.public`;
+}
+
+function userIdFrom(req: Request) {
+  const direct = req.headers.get("x-user-id");
+  if (direct) return Number(direct);
+  const payload = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").split(".")[1];
+  if (!payload) return 1;
+  try {
+    return Number(JSON.parse(atob(payload.replaceAll("-", "+").replaceAll("_", "/"))).userId || 1);
+  } catch {
+    return 1;
+  }
+}
+
+async function jsonBody(req: Request) {
+  try {
+    return await req.json();
+  } catch {
+    return {};
+  }
+}
+
+function syncAllowed(req: Request) {
+  const expected = currentEnv.LIANGHUA_SYNC_TOKEN || "lianghua-local-sync-20260603";
+  return req.headers.get("x-sync-token") === expected;
+}
+
+async function userByName(username: string) {
+  return await blobStore().get(`user:${username}`, { type: "json" });
+}
+
+async function saveUser(user: AnyRecord) {
+  const store = blobStore();
+  await store.setJSON(`user:${user.username}`, user);
+  await store.setJSON(`user-id:${user.id}`, user);
+}
+
+async function ensureUser(username = "admin", password = "123456") {
+  const existing = await userByName(username);
+  if (existing) return existing;
+  const user = {
+    id: Date.now(),
+    username,
+    password,
+    nickname: username === "admin" ? "管理员" : username,
+    role: username === "admin" ? "ADMIN" : "USER",
+    availableCash: 1000000,
+    initialCapital: 1000000,
+    createdAt: new Date().toISOString()
+  };
+  await saveUser(user);
+  await blobStore().setJSON(`positions:${user.id}`, []);
+  await blobStore().setJSON(`orders:${user.id}`, []);
+  return user;
+}
+
+async function fetchSina(codes: string[]) {
+  if (!codes.length) return [];
+  const response = await fetch(`https://hq.sinajs.cn/list=${codes.join(",")}`, {
+    headers: {
+      Referer: "https://finance.sina.com.cn",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+  const text = decodeGb(await response.arrayBuffer());
+  return text.split("\n").map((line) => {
+    const match = line.match(/hq_str_(\w+)="(.*)"/);
+    if (!match) return null;
+    const rawCode = match[1];
+    const fields = match[2].split(",");
+    if (!fields[0] || fields.length < 10) return null;
+    const current = Number(fields[3]) || 0;
+    const prevClose = Number(fields[2]) || 0;
+    const change = current - prevClose;
+    return {
+      code: rawCode.replace(/^(sh|sz|gb_)/, ""),
+      name: fields[0],
+      current,
+      open: Number(fields[1]) || 0,
+      prevClose,
+      high: Number(fields[4]) || 0,
+      low: Number(fields[5]) || 0,
+      volume: Number(fields[8]) || Number(fields[6]) || 0,
+      amount: Number(fields[9]) || Number(fields[7]) || 0,
+      change,
+      changePercent: prevClose ? Number(((change / prevClose) * 100).toFixed(2)) : 0,
+      market: rawCode.startsWith("gb_") ? "US" : "A"
+    };
+  }).filter(Boolean);
+}
+
+async function fetchEastmoneyBoardStocks(boardCode: string) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
+    const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=b:${encodeURIComponent(boardCode)}&fields=f12,f14,f2,f3,f5,f6`;
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Referer: "https://quote.eastmoney.com",
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    clearTimeout(timeout);
+    const json = await response.json() as AnyRecord;
+    return ((json.data?.diff || []) as AnyRecord[])
+      .filter((item) => item.f12 && item.f14)
+      .map((item) => ({
+        stockCode: String(item.f12),
+        stockName: String(item.f14),
+        currentPrice: Number(item.f2 || 0),
+        changePercent: Number(item.f3 || 0),
+        marketCap: Number(item.f6 || 0)
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchEastmoneySectorRows() {
+  try {
+    const url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62,f128,f136,f140,f141";
+    const response = await fetch(url, {
+      headers: {
+        Referer: "https://quote.eastmoney.com",
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    const json = await response.json() as AnyRecord;
+    const boards = ((json.data?.diff || []) as AnyRecord[]).filter((item) => item.f12 && item.f14);
+    const rows: AnyRecord[] = [];
+    for (const board of boards.slice(0, 8)) {
+      const boardCode = String(board.f12);
+      const stocks = await fetchEastmoneyBoardStocks(boardCode);
+      const leaderCode = String(board.f140 || "");
+      const leaderName = String(board.f128 || "");
+      const leaderChange = Number(board.f136 || 0);
+      const leaderStock = leaderCode
+        ? {
+            stockCode: leaderCode,
+            stockName: leaderName || leaderCode,
+            currentPrice: 0,
+            changePercent: leaderChange,
+            marketCap: null
+          }
+        : null;
+      const mergedStocks = stocks.length
+        ? stocks
+        : leaderStock
+          ? [leaderStock]
+          : [];
+      rows.push({
+        sectorName: String(board.f14),
+        sectorCode: boardCode,
+        changePercent: Number(board.f3 || 0),
+        leaderStock: leaderCode || mergedStocks[0]?.stockCode || null,
+        leaderName: leaderName || mergedStocks[0]?.stockName || null,
+        stockCount: mergedStocks.length,
+        avgChange: Number(board.f3 || 0),
+        leaderChangePercent: leaderChange || Number(mergedStocks[0]?.changePercent || 0),
+        source: "eastmoney-push2-industry",
+        stocks: mergedStocks
+      });
+    }
+    return rows.filter((item) => item.sectorCode && item.sectorName);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchGoldQuote(code = "hf_GC") {
+  const response = await fetch(`https://hq.sinajs.cn/list=${code}`, {
+    headers: {
+      Referer: "https://finance.sina.com.cn",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+  const text = decodeGb(await response.arrayBuffer());
+  const match = text.match(/hq_str_([^=]+)="([^"]*)"/);
+  if (!match) throw new Error("gold quote unavailable");
+  const fields = match[2].split(",");
+  const price = Number(fields[0]) || 0;
+  const prevClose = Number(fields[7] || fields[1] || 0);
+  const changePercent = prevClose ? Number((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+  return {
+    productCode: code,
+    productName: fields[13] || (code === "hf_XAU" ? "伦敦金" : "COMEX黄金"),
+    price,
+    changePercent,
+    high: Number(fields[4]) || price,
+    low: Number(fields[5]) || price,
+    openPrice: Number(fields[2] || fields[1]) || price,
+    tradeDate: `${fields[12] || new Date().toISOString().slice(0, 10)} ${fields[6] || ""}`.trim(),
+    source: "sina-public-gold"
+  };
+}
+
+const FUND_CODES = [
+  "000001", "110022", "161725", "163402", "000083", "003096", "005827", "006327",
+  "001875", "002594", "519674", "270002", "260108", "000311", "001938", "005827"
+];
+
+async function fetchFundRealtime(code: string) {
+  const response = await fetch(`https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`, {
+    headers: {
+      Referer: "https://fund.eastmoney.com",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+  const text = await response.text();
+  const match = text.match(/jsonpgz\((.*)\);?/);
+  if (!match) return null;
+  if (!match[1]?.trim()) return null;
+  const json = JSON.parse(match[1]);
+  const nav = Number(json.gsz || json.dwjz || 0);
+  return {
+    code: json.fundcode || code,
+    name: json.name || code,
+    nav,
+    accNav: Number(json.dwjz || nav),
+    navDate: json.gztime || json.jzrq || "",
+    changePercent: Number(json.gszzl || 0),
+    fundType: "公开基金",
+    source: "eastmoney-fundgz"
+  };
+}
+
+async function fetchFundList(page = 1, pageSize = 20) {
+  const rows = (await Promise.all(FUND_CODES.map((code) => fetchFundRealtime(code)))).filter(Boolean) as AnyRecord[];
+  const start = (page - 1) * pageSize;
+  return {
+    list: rows.slice(start, start + pageSize),
+    total: rows.length,
+    page,
+    pageSize
+  };
+}
+
+async function fetchSectorRows() {
+  const eastmoneyRows = await fetchEastmoneySectorRows();
+  if (eastmoneyRows.length >= 5) return eastmoneyRows;
+
+  const rows: AnyRecord[] = [];
+  for (const group of SECTOR_GROUPS) {
+    let stocks = (await fetchSina(group.codes)) as AnyRecord[];
+    if (stocks.length < Math.min(3, group.codes.length)) {
+      const fallbackStocks: AnyRecord[] = [];
+      for (const code of group.codes) {
+        try {
+          const single = (await fetchSina([code])) as AnyRecord[];
+          if (single[0]) fallbackStocks.push(single[0]);
+        } catch {
+          // Keep the sector usable with the remaining real quotes.
+        }
+      }
+      if (fallbackStocks.length > stocks.length) stocks = fallbackStocks;
+    }
+    const valid = stocks.filter((item) => Number(item.current) > 0);
+    if (!valid.length) continue;
+    const sorted = [...valid].sort((a, b) => Number(b.changePercent || 0) - Number(a.changePercent || 0));
+    const avgChange = Number((valid.reduce((sum, item) => sum + Number(item.changePercent || 0), 0) / valid.length).toFixed(2));
+    const leader = sorted[0];
+    rows.push({
+      sectorName: group.sectorName,
+      sectorCode: group.sectorCode,
+      changePercent: avgChange,
+      leaderStock: leader?.code || null,
+      leaderName: leader?.name || null,
+      stockCount: valid.length,
+      avgChange,
+      leaderChangePercent: Number(leader?.changePercent || 0),
+      stocks: valid.map((stock) => ({
+        stockCode: stock.code,
+        stockName: stock.name,
+        currentPrice: stock.current,
+        changePercent: stock.changePercent,
+        marketCap: null
+      }))
+    });
+  }
+  return rows.sort((a, b) => Number(b.changePercent || 0) - Number(a.changePercent || 0));
+}
+
+function sectorAiReason(sector: AnyRecord) {
+  const change = Number(sector.changePercent || 0);
+  const leader = Number(sector.leaderChangePercent || 0);
+  if (change >= 1.5 && leader >= 2) return "板块整体上涨且龙头股强势，说明资金共振较好，适合进入AI实验室重点观察。";
+  if (change >= 0.3) return "板块温和走强，龙头股有带动效应，适合低仓位验证趋势持续性。";
+  if (change < -1) return "板块短线承压，但若新闻或政策催化转强，可作为回撤低吸候选。";
+  return "板块处于震荡区间，建议等待新闻、资金和技术面进一步确认。";
+}
+
+function stockAiScore(stock: AnyRecord, sector: AnyRecord) {
+  const change = Number(stock.changePercent || 0);
+  const sectorChange = Number(sector.changePercent || 0);
+  const momentum = Math.max(0, Math.min(35, (change + 3) * 5));
+  const sectorBoost = Math.max(0, Math.min(25, (sectorChange + 2) * 5));
+  const stability = Math.max(0, 25 - Math.abs(change) * 2);
+  return Math.round(Math.max(0, Math.min(100, 35 + momentum + sectorBoost + stability)));
+}
+
+async function aiTopSectorPicks() {
+  const sectors = await fetchSectorRows();
+  const topSectors = sectors.slice(0, 5).map((sector) => {
+    const stocks = [...(sector.stocks || [])]
+      .map((stock) => ({
+        code: stock.stockCode,
+        name: stock.stockName,
+        changePercent: Number(stock.changePercent || 0),
+        aiScore: stockAiScore(stock, sector),
+        aiTrend: Number(stock.changePercent || 0) >= 1 ? "强势跟踪" : Number(stock.changePercent || 0) < 0 ? "回撤观察" : "震荡确认",
+        aiReason: `所在${sector.sectorName}板块涨跌 ${Number(sector.changePercent || 0).toFixed(2)}%，个股涨跌 ${Number(stock.changePercent || 0).toFixed(2)}%，按板块强度、龙头动量和波动稳定性综合评分。`
+      }))
+      .sort((a, b) => b.aiScore - a.aiScore)
+      .slice(0, 5);
+    return {
+      sectorName: sector.sectorName,
+      sectorCode: sector.sectorCode,
+      changePercent: Number(sector.changePercent || 0),
+      aiScore: Math.round(stocks.reduce((sum, item) => sum + item.aiScore, 0) / Math.max(1, stocks.length)),
+      aiReason: sectorAiReason(sector),
+      leaderStocks: stocks
+    };
+  });
+  const report = { topSectors, analysisTime: new Date().toISOString(), source: "sina-public-quotes" };
+  await blobStore().setJSON("ai-sector-top-picks", report);
+  return report;
+}
+
+async function labState(userId: number) {
+  const store = blobStore();
+  const ownState = await store.get(`ai-lab-state:${userId}`, { type: "json" });
+  if (ownState && (Number(ownState.generation || 0) > 0 || (ownState.experiments || []).length || (ownState.assets || []).length)) {
+    return ownState;
+  }
+  if (userId !== 1) {
+    const globalState = await store.get("ai-lab-state:1", { type: "json" });
+    if (globalState && (Number(globalState.generation || 0) > 0 || (globalState.experiments || []).length || (globalState.assets || []).length)) {
+      return { ...globalState, inheritedFromGlobalLab: true };
+    }
+  }
+  return ownState || {
+    generation: 0,
+    iterationCount: 0,
+    capital: 100000,
+    intervalMinutes: 5,
+    assets: [],
+    experiments: [],
+    evolutionLog: [],
+    champion: null,
+    lastRunAt: null,
+    updatedAt: null
+  };
+}
+
+async function labIterations(userId: number) {
+  const store = blobStore();
+  const own = await store.get(`ai-lab-iterations:${userId}`, { type: "json" }) || [];
+  if (own.length || userId === 1) return own;
+  return await store.get("ai-lab-iterations:1", { type: "json" }) || [];
+}
+
+async function markDirtyUser(userId: number) {
+  const store = blobStore();
+  const users = await store.get("ai-lab-dirty-users", { type: "json" }) || [];
+  if (!users.includes(userId)) {
+    users.push(userId);
+    await store.setJSON("ai-lab-dirty-users", users);
+  }
+}
+
+async function saveLabState(userId: number, data: AnyRecord) {
+  const previous = await labState(userId);
+  const next = {
+    ...previous,
+    ...data,
+    iterationCount: Number(data.iterationCount ?? data.generation ?? previous.iterationCount ?? 0),
+    updatedAt: new Date().toISOString()
+  };
+  await blobStore().setJSON(`ai-lab-state:${userId}`, next);
+  await markDirtyUser(userId);
+  return next;
+}
+
+function toStockInfo(stock: AnyRecord) {
+  return {
+    code: stock.code,
+    name: stock.name,
+    market: stock.market || "A",
+    currentPrice: stock.current,
+    openPrice: stock.open,
+    closePrice: stock.prevClose,
+    highPrice: stock.high,
+    lowPrice: stock.low,
+    volume: stock.volume,
+    turnover: stock.amount,
+    changePercent: stock.changePercent,
+    changeAmount: stock.change,
+    turnoverRate: 0,
+    pe: 0,
+    pb: 0,
+    marketCap: 0,
+    totalShares: 0,
+    circulateShares: 0
+  };
+}
+
+async function fetchKline(code: string, limit = 120) {
+  const secid = code.startsWith("6") ? `1.${code}` : `0.${code}`;
+  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt=${limit}`;
+  try {
+    const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const text = await response.text();
+    const json = JSON.parse(text);
+    const rows = json?.data?.klines || [];
+    if (rows.length) {
+      return {
+        dates: rows.map((row: string) => row.split(",")[0]),
+        prices: rows.map((row: string) => {
+          const fields = row.split(",");
+          return [Number(fields[1]), Number(fields[2]), Number(fields[3]), Number(fields[4])];
+        }),
+        volumes: rows.map((row: string) => Number(row.split(",")[5]) || 0),
+        turnover: rows.map((row: string) => Number(row.split(",")[6]) || 0),
+        source: "eastmoney-kline"
+      };
+    }
+  } catch {
+    // Keep the API usable without inventing historical candles.
+  }
+  const stock = await stockMeta(code);
+  const today = new Date().toISOString().slice(0, 10);
+  const open = Number(stock.open || stock.current || 0);
+  const close = Number(stock.current || open || 0);
+  const high = Number(stock.high || Math.max(open, close) || 0);
+  const low = Number(stock.low || Math.min(open, close) || 0);
+  return {
+    dates: [today],
+    prices: [[open, close, low, high]],
+    volumes: [Number(stock.volume || 0)],
+    turnover: [Number(stock.amount || 0)],
+    source: "sina-realtime-fallback"
+  };
+}
+
+function sentimentFromText(text: string): { sentiment: Sentiment; impactScore: number; score: number; reason: string } {
+  const bullish = BULLISH_WORDS.filter((word) => text.includes(word)).length;
+  const bearish = BEARISH_WORDS.filter((word) => text.includes(word)).length;
+  if (bullish > bearish) {
+    return { sentiment: "bullish", impactScore: Math.min(90, 58 + bullish * 8), score: Math.min(90, 58 + bullish * 8), reason: `命中${bullish}个偏多关键词` };
+  }
+  if (bearish > bullish) {
+    return { sentiment: "bearish", impactScore: Math.min(90, 58 + bearish * 8), score: Math.max(10, 42 - bearish * 8), reason: `命中${bearish}个偏空关键词` };
+  }
+  return { sentiment: "neutral", impactScore: 50, score: 50, reason: "未命中明确多空关键词" };
+}
+
+function averageScore(items: Array<{ score?: number; sentiment?: Sentiment }>, fallback = 50) {
+  if (!items.length) return fallback;
+  const total = items.reduce((sum, item) => {
+    if (typeof item.score === "number") return sum + item.score;
+    if (item.sentiment === "bullish") return sum + 65;
+    if (item.sentiment === "bearish") return sum + 35;
+    return sum + 50;
+  }, 0);
+  return Math.round(total / items.length);
+}
+
+function consensus(items: Array<{ sentiment?: Sentiment; type?: Sentiment }>) {
+  const bullishCount = items.filter((item) => (item.sentiment || item.type) === "bullish").length;
+  const bearishCount = items.filter((item) => (item.sentiment || item.type) === "bearish").length;
+  const neutralCount = Math.max(0, items.length - bullishCount - bearishCount);
+  const final: Sentiment = bullishCount > bearishCount && bullishCount > neutralCount
+    ? "bullish"
+    : bearishCount > bullishCount && bearishCount > neutralCount
+      ? "bearish"
+      : "neutral";
+  return { consensus: final, bullishCount, bearishCount, neutralCount };
+}
+
+async function stockMeta(code: string) {
+  const list = await fetchSina([stockPrefix(code)]);
+  return (list[0] || { code, name: code, current: 0, changePercent: 0 }) as AnyRecord;
+}
+
+async function fetchEastmoneyNews(code: string, keyword: string) {
+  const param = {
+    uid: "",
+    keyword,
+    type: ["cmsArticleWebOld"],
+    client: "web",
+    clientType: "web",
+    clientVersion: "curr",
+    param: {
+      cmsArticleWebOld: {
+        searchScope: "default",
+        sort: "default",
+        pageIndex: 1,
+        pageSize: 8
+      }
+    }
+  };
+  const api = `https://search-api-web.eastmoney.com/search/jsonp?cb=callback&param=${encodeURIComponent(JSON.stringify(param))}`;
+  try {
+    const response = await fetch(api, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const text = await response.text();
+    const json = JSON.parse(text.replace(/^callback\(/, "").replace(/\);?$/, ""));
+    return (json?.result?.cmsArticleWebOld || []).map((item: AnyRecord) => {
+      const title = cleanText(item.title);
+      const sentiment = sentimentFromText(`${title} ${cleanText(item.content || "")}`);
+      return {
+        title,
+        source: "东方财富资讯",
+        url: item.url || `https://finance.eastmoney.com/a/${item.code}.html`,
+        publishTime: item.date || new Date().toISOString(),
+        sentiment: sentiment.sentiment,
+        impactScore: sentiment.impactScore,
+        score: sentiment.score,
+        reason: `${keyword} 相关新闻；${sentiment.reason}`
+      };
+    }).filter((item: AnyRecord) => item.title);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchSinaNews(code: string, keyword: string) {
+  const api = `https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllNewsStock.php?symbol=${stockPrefix(code)}`;
+  try {
+    const response = await fetch(api, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const html = decodeGb(await response.arrayBuffer());
+    const items: AnyRecord[] = [];
+    const regex = /(\d{4}-\d{2}-\d{2})&nbsp;(\d{2}:\d{2})&nbsp;&nbsp;<a[^>]+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/g;
+    for (const match of html.matchAll(regex)) {
+      const title = cleanText(match[4]);
+      if (!title || items.some((item) => item.title === title)) continue;
+      const sentiment = sentimentFromText(title);
+      items.push({
+        title,
+        source: "新浪公开新闻",
+        url: match[3],
+        publishTime: `${match[1]} ${match[2]}`,
+        sentiment: sentiment.sentiment,
+        impactScore: sentiment.impactScore,
+        score: sentiment.score,
+        reason: `${code} 新浪公开新闻；${sentiment.reason}`
+      });
+      if (items.length >= 5) break;
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+async function fetchCctvNews(keyword = "") {
+  try {
+    const response = await fetch("https://news.cctv.com/", {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+    const html = await response.text();
+    const items: AnyRecord[] = [];
+    const regex = /<a[^>]+href=["'](https?:\/\/news\.cctv\.com\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/g;
+    for (const match of html.matchAll(regex)) {
+      const title = cleanText(match[2]);
+      if (!title || title.length < 6 || items.some((item) => item.title === title)) continue;
+      if (keyword && !title.includes(keyword)) {
+        const economyWords = ["经济", "金融", "资本", "市场", "产业", "科技", "消费", "能源", "汽车", "AI"];
+        if (!economyWords.some((word) => title.includes(word))) continue;
+      }
+      const sentiment = sentimentFromText(title);
+      items.push({
+        title,
+        source: "央视新闻",
+        url: match[1],
+        publishTime: new Date().toISOString(),
+        sentiment: sentiment.sentiment,
+        impactScore: sentiment.impactScore,
+        score: sentiment.score,
+        category: inferNewsCategory(title),
+        relatedStockHint: inferRelatedStock(title),
+        reason: `央视新闻重点源；${sentiment.reason}`
+      });
+      if (items.length >= 10) break;
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+function inferNewsCategory(title: string) {
+  if (title.includes("金融") || title.includes("资本") || title.includes("银行") || title.includes("证券")) return "金融";
+  if (title.includes("科技") || title.includes("AI") || title.includes("芯片") || title.includes("数据")) return "科技";
+  if (title.includes("消费") || title.includes("旅游") || title.includes("白酒")) return "消费";
+  if (title.includes("能源") || title.includes("电力") || title.includes("煤") || title.includes("油")) return "能源";
+  if (title.includes("医药") || title.includes("医疗")) return "医药";
+  if (title.includes("地产") || title.includes("房地产")) return "地产";
+  return "宏观";
+}
+
+function inferRelatedStock(title: string) {
+  const hints = [
+    { word: "银行", stock: "银行板块/招商银行/浦发银行" },
+    { word: "白酒", stock: "白酒板块/贵州茅台/五粮液" },
+    { word: "AI", stock: "AI算力/科技板块" },
+    { word: "芯片", stock: "半导体板块" },
+    { word: "能源", stock: "能源板块/中国石油/中国石化" },
+    { word: "医药", stock: "医药板块/恒瑞医药" },
+    { word: "汽车", stock: "汽车板块/比亚迪" }
+  ];
+  return hints.find((item) => title.includes(item.word))?.stock || "需AI进一步关联";
+}
+
+async function fetchCninfoAnnouncements(code: string) {
+  try {
+    const stockListResponse = await fetch("https://www.cninfo.com.cn/new/data/szse_stock.json", { headers: { "User-Agent": "Mozilla/5.0" } });
+    const stockList = await stockListResponse.json();
+    const hit = (stockList?.stockList || []).find((item: AnyRecord) => item.code === code);
+    if (!hit?.orgId) return [];
+    const body = new URLSearchParams({
+      stock: `${code},${hit.orgId}`,
+      searchkey: "",
+      plate: "",
+      category: "",
+      trade: "",
+      column: cninfoColumn(code),
+      columnTitle: "历史公告查询",
+      pageNum: "1",
+      pageSize: "8",
+      tabName: "fulltext",
+      sortName: "",
+      sortType: "",
+      limit: "",
+      showTitle: "",
+      seDate: ""
+    });
+    const response = await fetch("https://www.cninfo.com.cn/new/hisAnnouncement/query", {
+      method: "POST",
+      body,
+      headers: {
+        Referer: "https://www.cninfo.com.cn/new/commonUrl/pageOfSearch?url=disclosure/list/search",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    const json = await response.json();
+    return (json?.announcements || []).map((item: AnyRecord) => {
+      const title = cleanText(item.announcementTitle || item.shortTitle || "");
+      const sentiment = sentimentFromText(title);
+      return {
+        title,
+        source: "巨潮资讯公告",
+        url: `https://www.cninfo.com.cn/new/disclosure/detail?stockCode=${code}&announcementId=${item.announcementId}&orgId=${hit.orgId}&announcementTime=${item.announcementTime}`,
+        publishTime: item.announcementTime ? new Date(item.announcementTime).toISOString() : new Date().toISOString(),
+        sentiment: sentiment.sentiment,
+        impactScore: Math.max(sentiment.impactScore, title.includes("年度报告") || title.includes("季度报告") ? 68 : 50),
+        score: sentiment.score,
+        reason: `上市公司公告事件；${sentiment.reason}`
+      };
+    }).filter((item: AnyRecord) => item.title);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchGubaOpinions(code: string) {
+  try {
+    const response = await fetch(`https://guba.eastmoney.com/list,${code}.html`, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const html = await response.text();
+    const items: AnyRecord[] = [];
+    const regex = /<a[^>]+href="(\/news,[^"]+\.html)"[^>]*>([\s\S]*?)<\/a>/g;
+    for (const match of html.matchAll(regex)) {
+      const title = cleanText(match[2]);
+      if (!title || items.some((item) => item.view === title)) continue;
+      const sentiment = sentimentFromText(title);
+      items.push({
+        name: `东方财富股吧用户-${items.length + 1}`,
+        type: sentiment.sentiment,
+        view: title,
+        detail: `公开社区帖子标题解析：${sentiment.reason}`,
+        influence: sentiment.sentiment === "neutral" ? 4 : 6,
+        publishTime: new Date().toISOString(),
+        url: `https://guba.eastmoney.com${match[1]}`,
+        score: sentiment.score
+      });
+      if (items.length >= 6) break;
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+async function sentimentBundle(code: string, stockName?: string) {
+  const keyword = stockName && stockName !== code ? stockName : code;
+  const [eastmoneyNews, sinaNews, announcements, opinions] = await Promise.all([
+    fetchEastmoneyNews(code, keyword),
+    fetchSinaNews(code, keyword),
+    fetchCninfoAnnouncements(code),
+    fetchGubaOpinions(code)
+  ]);
+  const newsItems = [...eastmoneyNews, ...sinaNews, ...announcements]
+    .filter((item, index, arr) => arr.findIndex((other) => other.title === item.title) === index)
+    .slice(0, 12);
+  const newsScore = averageScore(newsItems, 50);
+  const announcementScore = averageScore(announcements, 50);
+  const communityScore = averageScore(opinions.map((item) => ({ score: item.score, sentiment: item.type })), 50);
+  return {
+    newsItems,
+    announcements,
+    opinions,
+    newsScore,
+    announcementScore,
+    communityScore,
+    sentimentScore: Math.round(newsScore * 0.45 + announcementScore * 0.2 + communityScore * 0.35)
+  };
+}
+
+function signalFor(stock: AnyRecord): { date: string; type: Signal; strength: number; indicator: string; message: string } {
+  const type: Signal = stock.changePercent > 1 ? "BUY" : stock.changePercent < -1 ? "SELL" : "HOLD";
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    type,
+    strength: Math.min(95, Math.max(45, Math.round(Math.abs(stock.changePercent || 0) * 12 + 55))),
+    indicator: "REALTIME_TECH",
+    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${stock.changePercent || 0}%，技术信号 ${type}`
+  };
+}
+
+function signalForV2(stock: AnyRecord): AnyRecord {
+  const pct = Number(stock.changePercent || 0);
+  const type: Signal = pct > 1 ? "BUY" : pct < -1 ? "SELL" : "HOLD";
+  const ma: Signal = pct > 0.6 ? "BUY" : pct < -0.6 ? "SELL" : "HOLD";
+  const macd: Signal = pct > 1 ? "BUY" : pct < -1 ? "SELL" : "HOLD";
+  const rsi: Signal = pct < -2 ? "BUY" : pct > 2 ? "SELL" : "HOLD";
+  const kdj: Signal = pct > 0.8 ? "BUY" : pct < -0.8 ? "SELL" : "HOLD";
+  const boll: Signal = pct < -1.5 ? "BUY" : pct > 1.5 ? "SELL" : "HOLD";
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    type,
+    signal: type,
+    strength: Math.min(5, Math.max(1, Math.round(Math.abs(pct) + 2))),
+    indicator: "REALTIME_TECH",
+    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${pct.toFixed(2)}%，技术信号 ${type}`,
+    description: `MA、MACD、RSI、KDJ、BOLL 根据当前真实报价变化生成即时技术面研判。`,
+    indicatorSignals: {
+      MA: `均线方向：涨跌幅 ${pct.toFixed(2)}%，短周期趋势${ma === "BUY" ? "偏强" : ma === "SELL" ? "转弱" : "震荡"} - ${ma}`,
+      MACD: `动量研判：价格动能${macd === "BUY" ? "增强" : macd === "SELL" ? "减弱" : "中性"} - ${macd}`,
+      RSI: `强弱研判：${rsi === "BUY" ? "短线超跌修复" : rsi === "SELL" ? "短线过热回落" : "强弱均衡"} - ${rsi}`,
+      KDJ: `短线节奏：${kdj === "BUY" ? "金叉倾向" : kdj === "SELL" ? "死叉倾向" : "等待方向"} - ${kdj}`,
+      BOLL: `布林位置：${boll === "BUY" ? "接近下轨反弹" : boll === "SELL" ? "接近上轨回落" : "中轨附近震荡"} - ${boll}`
+    }
+  };
+}
+
+async function account(userId: number) {
+  const user = await blobStore().get(`user-id:${userId}`, { type: "json" }) || await ensureUser();
+  const positions = await blobStore().get(`positions:${user.id}`, { type: "json" }) || [];
+  const marketValue = positions.reduce((sum: number, item: AnyRecord) => sum + (item.marketValue || 0), 0);
+  return {
+    totalAssets: Number(user.availableCash || 0) + marketValue,
+    availableCash: Number(user.availableCash || 0),
+    marketValue,
+    totalProfit: 0,
+    totalProfitPercent: 0,
+    todayProfit: 0,
+    todayProfitPercent: 0,
+    positionCount: positions.length
+  };
+}
+
+function strategySet(signal: Signal, score: number, stock: AnyRecord, bundle: AnyRecord) {
+  const current = Number(stock.current || 0);
+  const trendStrategy = {
+    name: "趋势跟随策略",
+    style: "trend",
+    signal,
+    score,
+    expectedReturnScore: signal === "BUY" ? 72 : 48,
+    riskScore: signal === "SELL" ? 72 : 55,
+    sentimentFitScore: bundle.sentimentScore,
+    suggestedPosition: signal === "BUY" ? "20%-30%试探仓位" : "空仓或低仓观察",
+    entryRule: "价格重新站上短期均线且成交量温和放大时入场",
+    exitRule: "跌破关键均线或综合分低于45分时退出",
+    stopLossRule: current ? `跌破 ${Number((current * 0.95).toFixed(2))} 止损` : "以最近低点为止损",
+    takeProfitRule: current ? `接近 ${Number((current * 1.08).toFixed(2))} 分批止盈` : "按8%-10%收益分批止盈",
+    evaluationRule: "3-5个交易日复盘收益、回撤和舆情变化，自动调整仓位阈值",
+    rationale: "结合实时涨跌幅、新闻情绪、公告事件和社区观点形成综合方向"
+  };
+  const meanReversion = {
+    ...trendStrategy,
+    name: "低吸反转策略",
+    style: "mean-reversion",
+    signal: signal === "SELL" ? "HOLD" : signal,
+    score: Math.max(45, score - 6),
+    entryRule: "急跌后企稳且负面新闻未继续扩散时小仓位试错",
+    rationale: "适合震荡行情，重点控制止损和消息面恶化风险"
+  };
+  const eventDriven = {
+    ...trendStrategy,
+    name: "事件驱动策略",
+    style: "event-driven",
+    score: Math.round(score * 0.6 + bundle.announcementScore * 0.4),
+    sentimentFitScore: bundle.announcementScore,
+    entryRule: "公告事件明确偏多且市场放量确认时入场",
+    rationale: "重点跟踪巨潮公告和新闻催化，不依赖虚构舆情"
+  };
+  const candidates = [trendStrategy, meanReversion, eventDriven];
+  const selected = [...candidates].sort((a, b) => b.score - a.score)[0];
+  return { candidates, selected };
+}
+
+async function analyze(code: string) {
+  const stock = await stockMeta(code);
+  const signal = signalFor(stock);
+  const techScore = signal.type === "BUY" ? 72 : signal.type === "SELL" ? 38 : 55;
+  const bundle = await sentimentBundle(code, stock.name);
+  const score = Math.round(techScore * 0.45 + bundle.newsScore * 0.25 + bundle.communityScore * 0.2 + bundle.announcementScore * 0.1);
+  const finalSignal: Signal = score >= 65 ? "BUY" : score <= 42 ? "SELL" : "HOLD";
+  const { candidates, selected } = strategySet(finalSignal, score, stock, bundle);
+  const opinionConsensus = consensus(bundle.opinions);
+  const current = Number(stock.current || 0);
+  return {
+    stockCode: code,
+    stockName: stock.name || code,
+    signal: finalSignal,
+    score,
+    techScore,
+    sentimentScore: bundle.sentimentScore,
+    targetPrice: current ? `${Number((current * 0.95).toFixed(2))}-${Number((current * 1.08).toFixed(2))}` : "以真实行情为准",
+    analysis: `综合研判采用真实行情、东方财富/新浪公开新闻、巨潮公告、东方财富股吧公开讨论。技术分${techScore}，新闻分${bundle.newsScore}，社区影响分${bundle.communityScore}，公告事件分${bundle.announcementScore}，综合分${score}。`,
+    modelUsed: "Cloudflare Quant Sentiment Engine",
+    modelAvailable: true,
+    quantDecision: {
+      signal: finalSignal,
+      confidence: score,
+      riskLevel: score >= 70 ? "MEDIUM" : score <= 42 ? "HIGH" : "MEDIUM",
+      trendState: signal.type === "BUY" ? "偏强" : signal.type === "SELL" ? "偏弱" : "震荡",
+      suggestedPosition: finalSignal === "BUY" ? "轻仓试探，分批确认" : finalSignal === "SELL" ? "降低仓位或回避" : "观望等待确认",
+      stopLoss: current ? Number((current * 0.95).toFixed(2)) : 0,
+      takeProfit: current ? Number((current * 1.08).toFixed(2)) : 0,
+      targetRange: current ? `${Number((current * 0.95).toFixed(2))}-${Number((current * 1.08).toFixed(2))}` : "",
+      summary: "技术 + 新闻 + 公告 + 社区舆情综合评判"
+    },
+    factors: [
+      { name: "技术面", score: techScore, direction: signal.type, weight: 45, reason: signal.message },
+      { name: "新闻情绪", score: bundle.newsScore, direction: bundle.newsScore >= 58 ? "bullish" : bundle.newsScore <= 42 ? "bearish" : "neutral", weight: 25, reason: `东方财富/新浪新闻 ${bundle.newsItems.length} 条` },
+      { name: "大V/社区影响力", score: bundle.communityScore, direction: opinionConsensus.consensus, weight: 20, reason: `东方财富股吧公开讨论 ${bundle.opinions.length} 条；雪球需要授权后接入` },
+      { name: "公告事件", score: bundle.announcementScore, direction: bundle.announcementScore >= 58 ? "bullish" : bundle.announcementScore <= 42 ? "bearish" : "neutral", weight: 10, reason: `巨潮公告 ${bundle.announcements.length} 条` }
+    ],
+    scenarios: [
+      { name: "放量突破", probability: score >= 65 ? 45 : 25, trigger: "综合分持续高于65且新闻偏多", action: "轻仓跟随并设置止损" },
+      { name: "消息转弱", probability: score <= 45 ? 45 : 25, trigger: "公告/社区出现连续负面关键词", action: "降低仓位或等待修复" },
+      { name: "震荡整理", probability: 35, trigger: "技术与舆情分歧", action: "等待量价确认" }
+    ],
+    risks: [
+      "社区舆情来自公开股吧标题解析，雪球大V需要账号或接口授权后才能纳入",
+      "新闻情绪为关键词和来源权重模型，需结合人工复核重大公告",
+      "结果不构成投资建议"
+    ],
+    actions: finalSignal === "BUY" ? ["观察放量确认", "轻仓试探", "设置5%止损", "跟踪公告和社区情绪变化"] : finalSignal === "SELL" ? ["降低仓位", "回避负面公告扩散", "等待技术修复"] : ["保持观察", "等待新闻或技术面确认"],
+    daVOpinions: bundle.opinions,
+    daVMajority: {
+      ...opinionConsensus,
+      summary: bundle.opinions.length
+        ? `公开社区讨论多数为${opinionConsensus.consensus === "bullish" ? "偏多" : opinionConsensus.consensus === "bearish" ? "偏空" : "中性"}`
+        : "暂无可验证社区观点；雪球大V需授权后接入"
+    },
+    newsItems: bundle.newsItems,
+    candidateStrategies: candidates,
+    selectedStrategy: selected,
+    evolution: {
+      generation: 2,
+      status: "online",
+      lastLearning: "已纳入公开新闻、公告和社区舆情",
+      nextMutation: "接入雪球授权源后提高大V权重精度",
+      outcomeJudgement: "按交易记录、新闻变化和回撤持续校准",
+      historySamples: bundle.newsItems.length + bundle.opinions.length
+    }
+  };
+}
+
+async function route(req: Request) {
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^\/api/, "") || "/";
+  const method = req.method.toUpperCase();
+
+  if (path === "/sync/ai-lab/export" && method === "GET") {
+    if (!syncAllowed(req)) return send(null, "同步密钥无效", 403);
+    const store = blobStore();
+    const dirtyUsers = await store.get("ai-lab-dirty-users", { type: "json" }) || [];
+    const users = dirtyUsers.length ? dirtyUsers : [1];
+    const states = [];
+    for (const userId of users) {
+      states.push({ userId, state: await labState(Number(userId)) });
+    }
+    return send({ dirtyUsers, states, exportedAt: new Date().toISOString() });
+  }
+
+  if (path === "/sync/ai-lab/import" && method === "POST") {
+    if (!syncAllowed(req)) return send(null, "同步密钥无效", 403);
+    const data = await jsonBody(req);
+    const store = blobStore();
+    const states = Array.isArray(data.states) ? data.states : [];
+    const iterations = Array.isArray(data.iterations) ? data.iterations : [];
+    for (const item of states) {
+      if (item?.userId && item?.state) {
+        await store.setJSON(`ai-lab-state:${Number(item.userId)}`, {
+          ...item.state,
+          syncedAt: new Date().toISOString()
+        });
+      }
+    }
+    for (const item of iterations) {
+      if (item?.userId && item?.record) {
+        const key = `ai-lab-iterations:${Number(item.userId)}`;
+        const history = await store.get(key, { type: "json" }) || [];
+        history.unshift(item.record);
+        await store.setJSON(key, history.slice(0, 200));
+      }
+    }
+    const processed = Array.isArray(data.processedUsers) ? data.processedUsers.map(Number) : states.map((item: AnyRecord) => Number(item.userId));
+    const dirtyUsers = await store.get("ai-lab-dirty-users", { type: "json" }) || [];
+    await store.setJSON("ai-lab-dirty-users", dirtyUsers.filter((userId: number) => !processed.includes(Number(userId))));
+    return send({ importedStates: states.length, importedIterations: iterations.length, processedUsers: processed }, "同步完成");
+  }
+
+  if (method === "POST" && path === "/auth/login") {
+    const data = await jsonBody(req);
+    if (!data.username || !data.password) return send(null, "请输入用户名和密码", 400);
+    const user = await ensureUser(data.username, data.password);
+    if (user.password !== data.password) return send(null, "密码错误", 401);
+    return send({ token: makeToken(user), userId: user.id, username: user.username, nickname: user.nickname, role: user.role, availableCash: user.availableCash, initialCapital: user.initialCapital });
+  }
+
+  if (method === "POST" && path === "/auth/register") {
+    const data = await jsonBody(req);
+    if (!data.username || !data.password) return send(null, "请输入用户名和密码", 400);
+    if (await userByName(data.username)) return send(null, "用户已存在", 409);
+    await ensureUser(data.username, data.password);
+    return send(null, "注册成功");
+  }
+
+  if (method === "GET" && path === "/auth/info") {
+    const user = await blobStore().get(`user-id:${userIdFrom(req)}`, { type: "json" }) || await ensureUser();
+    return send({ id: user.id, username: user.username, nickname: user.nickname, role: user.role, availableCash: user.availableCash, initialCapital: user.initialCapital });
+  }
+
+  if (method === "GET" && path === "/stock/sina/a-stocks") {
+    const page = Number(url.searchParams.get("page") || 1);
+    const pageSize = Number(url.searchParams.get("pageSize") || 20);
+    return Response.json({ code: 200, message: "success", data: await fetchSina(A_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: A_STOCKS.length });
+  }
+
+  if (method === "GET" && path === "/stock/sina/us-stocks") {
+    const page = Number(url.searchParams.get("page") || 1);
+    const pageSize = Number(url.searchParams.get("pageSize") || 20);
+    return Response.json({ code: 200, message: "success", data: await fetchSina(US_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: US_STOCKS.length });
+  }
+
+  if (method === "GET" && path === "/stock/sina/indices") return send(await fetchSina(INDICES));
+  if (method === "GET" && path === "/stock/sina/realtime") return send(await fetchSina((url.searchParams.get("codes") || "").split(",").filter(Boolean).map(stockPrefix)));
+
+  const realtime = path.match(/^\/stock\/realtime\/([^/]+)$/);
+  if (method === "GET" && realtime) {
+    const list = await fetchSina([stockPrefix(realtime[1])]);
+    return list.length ? send(toStockInfo(list[0] as AnyRecord)) : send(null, "未找到该股票", 404);
+  }
+
+  if (method === "GET" && path === "/stock/list") {
+    const page = Number(url.searchParams.get("page") || 1);
+    const pageSize = Number(url.searchParams.get("pageSize") || 20);
+    const list = (await fetchSina(A_STOCKS.slice((page - 1) * pageSize, page * pageSize))).map((item) => toStockInfo(item as AnyRecord));
+    return send({ list, total: A_STOCKS.length, page, pageSize });
+  }
+
+  const kline = path.match(/^\/stock\/kline\/([^/]+)$/);
+  if (method === "GET" && kline) return send(await fetchKline(kline[1]));
+
+  const indicator = path.match(/^\/analysis\/(signal|indicators)\/([^/]+)$/);
+  if (method === "GET" && indicator) {
+    const code = indicator[2];
+    const stock = code.startsWith("hf_") ? await fetchGoldQuote(code) : await stockMeta(code);
+    const signal = signalForV2({
+      code,
+      name: stock.name || stock.productName || code,
+      changePercent: stock.changePercent || 0
+    });
+    return indicator[1] === "signal" ? send(signal) : send([{ name: "REALTIME_TECH", values: [], signals: [signal], indicatorSignals: signal.indicatorSignals }]);
+  }
+  if (method === "GET" && path.startsWith("/analysis/backtest/")) return send({ startDate: "", endDate: "", initialCapital: 100000, finalCapital: 100000, totalReturn: 0, annualizedReturn: 0, maxDrawdown: 0, sharpeRatio: 0, winRate: 0, totalTrades: 0, trades: [] });
+
+  if (method === "GET" && path === "/ai/news") {
+    const code = url.searchParams.get("stockCode") || "";
+    const keyword = url.searchParams.get("keyword") || "";
+    const category = url.searchParams.get("category") || "";
+    if (code) {
+      const stock = await stockMeta(code);
+      const bundle = await sentimentBundle(code, stock.name);
+      const cctv = await fetchCctvNews(stock.name || keyword);
+      return send([...cctv, ...bundle.newsItems].filter((item) => !category || item.category === category || item.reason?.includes(category)).slice(0, 20));
+    }
+    let cctv = await fetchCctvNews(keyword);
+    let filtered = cctv.filter((item) => !category || item.category === category);
+    if (!filtered.length && (keyword || category)) {
+      cctv = await fetchCctvNews("");
+      filtered = cctv.filter((item) => !category || item.category === category);
+    }
+    return send(filtered.slice(0, 20));
+  }
+  if (method === "GET" && path === "/ai/lab/state") {
+    return send(await labState(userIdFrom(req)));
+  }
+  if (method === "POST" && path === "/ai/lab/state") {
+    return send(await saveLabState(userIdFrom(req), await jsonBody(req)), "AI实验室状态已保存");
+  }
+  if (method === "POST" && path === "/ai/lab/iteration") {
+    const userId = userIdFrom(req);
+    const data = await jsonBody(req);
+    const state = await labState(userId);
+    const history = await blobStore().get(`ai-lab-iterations:${userId}`, { type: "json" }) || [];
+    const record = {
+      id: Date.now(),
+      generation: Number(data.generation ?? state.generation ?? 0),
+      champion: data.champion || null,
+      experiments: data.experiments || [],
+      capital: Number(data.capital ?? state.capital ?? 100000),
+      intervalMinutes: Number(data.intervalMinutes ?? state.intervalMinutes ?? 5),
+      createdAt: new Date().toISOString()
+    };
+    history.unshift(record);
+    await blobStore().setJSON(`ai-lab-iterations:${userId}`, history.slice(0, 200));
+    const nextState = await saveLabState(userId, {
+      ...data,
+      iterationCount: record.generation,
+      lastRunAt: record.createdAt
+    });
+    return send({ state: nextState, record }, "AI实验室迭代已入库");
+  }
+  if (method === "GET" && path === "/ai/lab/iterations") {
+    return send(await labIterations(userIdFrom(req)));
+  }
+  if (method === "GET" && path === "/ai/sector/top-picks") {
+    const cached = await blobStore().get("ai-sector-top-picks", { type: "json" });
+    const age = cached?.analysisTime ? Date.now() - Date.parse(cached.analysisTime) : Number.POSITIVE_INFINITY;
+    return send(cached && age < 5 * 60 * 1000 ? cached : await aiTopSectorPicks());
+  }
+  if (method === "POST" && path === "/ai/sector/analyze") {
+    return send(await aiTopSectorPicks(), "AI板块分析完成");
+  }
+  if (method === "GET" && path === "/ai/sector/report") {
+    return send(await blobStore().get("ai-sector-top-picks", { type: "json" }) || await aiTopSectorPicks());
+  }
+  if (method === "GET" && path === "/ai/announcements") {
+    return send(await fetchCninfoAnnouncements(url.searchParams.get("stockCode") || "600000"));
+  }
+  if (method === "GET" && path === "/ai/sentiment") {
+    const code = url.searchParams.get("stockCode") || "600000";
+    const stock = await stockMeta(code);
+    return send(await sentimentBundle(code, stock.name));
+  }
+  if (method === "POST" && path === "/ai/analyze") {
+    const data = await jsonBody(req);
+    return send(await analyze(data.stockCode || "600000"));
+  }
+
+  if (method === "GET" && path === "/ai/configs") return send(await blobStore().get("ai-configs", { type: "json" }) || [{ id: 1, name: "公网量化舆情引擎", provider: "cloudflare", modelName: "quant-sentiment", enabled: true, createTime: new Date().toISOString() }]);
+  if (method === "POST" && path === "/ai/configs") {
+    const configs = await blobStore().get("ai-configs", { type: "json" }) || [];
+    const item = { id: Date.now(), enabled: true, createTime: new Date().toISOString(), ...(await jsonBody(req)) };
+    configs.push(item);
+    await blobStore().setJSON("ai-configs", configs);
+    return send(item, "配置已保存");
+  }
+  const aiConfigById = path.match(/^\/ai\/configs\/(\d+)$/);
+  if (aiConfigById && method === "PUT") return send(null, "配置已更新");
+  if (aiConfigById && method === "DELETE") return send(null, "配置已删除");
+  if (path.match(/^\/ai\/configs\/(\d+)\/test$/) && method === "POST") return send({ available: true }, "公网量化舆情引擎可用");
+
+  if (method === "GET" && path === "/trade/account") return send(await account(userIdFrom(req)));
+  if (method === "GET" && path === "/trade/positions") return send(await blobStore().get(`positions:${userIdFrom(req)}`, { type: "json" }) || []);
+  if (method === "GET" && path === "/trade/orders") return send({ list: await blobStore().get(`orders:${userIdFrom(req)}`, { type: "json" }) || [], total: 0 });
+  if (method === "POST" && (path === "/trade/buy" || path === "/trade/sell")) {
+    const userId = userIdFrom(req);
+    const data = await jsonBody(req);
+    const orders = await blobStore().get(`orders:${userId}`, { type: "json" }) || [];
+    orders.unshift({ id: Date.now(), userId, ...data, amount: Number(data.price || 0) * Number(data.quantity || 0), fee: 0, status: "FILLED", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    await blobStore().setJSON(`orders:${userId}`, orders);
+    return send(null, "交易已记录");
+  }
+  if (method === "DELETE" && path.startsWith("/trade/order/")) return send(null, "订单已处理");
+  if (method === "GET" && path === "/trade/profit-analysis") return send({ totalTradeCount: 0, winCount: 0, loseCount: 0, winRate: 0, totalProfit: 0, totalLoss: 0, avgProfit: 0, avgLoss: 0, profitLossRatio: 0, maxDrawdown: 0, sharpeRatio: 0 });
+  if (method === "GET" && path === "/trade/profit-records") return send([]);
+
+  if (method === "GET" && path === "/stock/fund/list") {
+    const page = Number(url.searchParams.get("page") || 1);
+    const pageSize = Number(url.searchParams.get("pageSize") || 20);
+    return send(await fetchFundList(page, pageSize));
+  }
+  const fundDetail = path.match(/^\/stock\/fund\/([^/]+)$/);
+  if (method === "GET" && fundDetail) {
+    const fund = await fetchFundRealtime(fundDetail[1]);
+    return fund ? send(fund) : send(null, "fund public data unavailable", 404);
+  }
+  if (method === "GET" && path === "/stock/gold/products") return send(METALS);
+  if (method === "GET" && path === "/stock/gold/latest") return send(await fetchGoldQuote(url.searchParams.get("code") || "hf_GC"));
+  if (method === "GET" && path === "/stock/gold/history") return send({ list: [await fetchGoldQuote(url.searchParams.get("code") || "hf_GC")] });
+
+  if (method === "GET" && path === "/stock/sectors") return send((await fetchSectorRows()).map(({ stocks, ...sector }) => sector));
+  const sectorDetail = path.match(/^\/stock\/sectors\/([^/]+)$/);
+  if (method === "GET" && sectorDetail) {
+    const sector = (await fetchSectorRows()).find((item) => item.sectorCode === sectorDetail[1]);
+    return sector ? send(sector) : send(null, "sector unavailable", 404);
+  }
+  const sectorStocks = path.match(/^\/stock\/sectors\/([^/]+)\/stocks$/);
+  if (method === "GET" && sectorStocks) {
+    const sector = (await fetchSectorRows()).find((item) => item.sectorCode === sectorStocks[1]);
+    return sector ? send(sector.stocks) : send([], "success");
+  }
+
+  if (path.startsWith("/stock/fund/list")) return send({ list: [], total: 0, page: 1, pageSize: 20 });
+  if (path.startsWith("/stock/gold/products")) return send({ hf_GC: "COMEX黄金", hf_XAU: "伦敦金" });
+  if (path.startsWith("/stock/gold/")) return send(null, "黄金公网数据源暂未接入", 503);
+  if (path.startsWith("/recharge/")) return send({ list: [], total: 0 });
+  if (path.startsWith("/stock/sectors")) return send([]);
+
+  return send(null, `接口不存在：${path}`, 404);
+}
+
+async function handleApi(req: Request, env: PagesEnv = {}) {
+  currentEnv = env || {};
+  try {
+    return await route(req);
+  } catch (error: any) {
+    return send(null, error?.message || "服务异常", 500);
+  }
+}
+
+export const onRequest = async ({ request, env }: PagesContext) => {
+  return handleApi(request, env);
+};

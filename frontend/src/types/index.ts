@@ -25,7 +25,13 @@ export interface RegisterRequest {
 
 export interface LoginResponse {
   token: string
-  user: User
+  user?: User
+  userId: number
+  username: string
+  nickname?: string
+  role?: string
+  availableCash?: number
+  initialCapital?: number
 }
 
 // ==================== 股票相关 ====================
@@ -125,6 +131,8 @@ export interface TradeLog {
 // ==================== 请求/响应 ====================
 export interface BuyRequest {
   stockCode: string
+  stockName?: string
+  market?: string
   direction: 'BUY'
   orderType: OrderType
   price: number
@@ -133,6 +141,8 @@ export interface BuyRequest {
 
 export interface SellRequest {
   stockCode: string
+  stockName?: string
+  market?: string
   direction: 'SELL'
   orderType: OrderType
   price: number
@@ -225,8 +235,46 @@ export interface AiAnalysisResponse {
   targetPrice: string
   analysis: string
   modelUsed: string
+  quantDecision?: QuantDecision
+  factors?: QuantFactor[]
+  scenarios?: QuantScenario[]
+  risks?: string[]
+  actions?: string[]
+  modelAvailable?: boolean
+  failureReason?: string
   daVOpinions: DaVOpinion[]
   daVMajority: DaVMajorityConsensus
+  newsItems?: NewsItem[]
+  candidateStrategies?: CandidateStrategy[]
+  selectedStrategy?: CandidateStrategy
+  evolution?: StrategyEvolution
+}
+
+export interface QuantDecision {
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  confidence: number
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'
+  trendState: string
+  suggestedPosition: string
+  stopLoss: number
+  takeProfit: number
+  targetRange: string
+  summary: string
+}
+
+export interface QuantFactor {
+  name: string
+  score: number
+  direction: string
+  weight: number
+  reason: string
+}
+
+export interface QuantScenario {
+  name: string
+  probability: number
+  trigger: string
+  action: string
 }
 
 export interface DaVOpinion {
@@ -244,6 +292,42 @@ export interface DaVMajorityConsensus {
   bullishCount: number
   bearishCount: number
   neutralCount: number
+}
+
+export interface NewsItem {
+  title: string
+  source: string
+  url: string
+  publishTime: string
+  sentiment: 'bullish' | 'bearish' | 'neutral'
+  impactScore: number
+  reason: string
+}
+
+export interface CandidateStrategy {
+  name: string
+  style: string
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  score: number
+  expectedReturnScore: number
+  riskScore: number
+  sentimentFitScore: number
+  suggestedPosition: string
+  entryRule: string
+  exitRule: string
+  stopLossRule: string
+  takeProfitRule: string
+  evaluationRule: string
+  rationale: string
+}
+
+export interface StrategyEvolution {
+  generation: number
+  status: string
+  lastLearning: string
+  nextMutation: string
+  outcomeJudgement: string
+  historySamples: number
 }
 
 // ==================== 通用 ====================

@@ -58,10 +58,10 @@
       <!-- 涨跌排行 -->
       <div class="rank-bar">
         <el-radio-group v-model="sortField" size="small" @change="loadData">
-          <el-radio-button label="changePercent">涨跌幅</el-radio-button>
-          <el-radio-button label="volume">成交量</el-radio-button>
-          <el-radio-button label="turnoverRate">换手率</el-radio-button>
-          <el-radio-button label="marketCap">总市值</el-radio-button>
+          <el-radio-button value="changePercent">涨跌幅</el-radio-button>
+          <el-radio-button value="volume">成交量</el-radio-button>
+          <el-radio-button value="turnoverRate">换手率</el-radio-button>
+          <el-radio-button value="marketCap">总市值</el-radio-button>
         </el-radio-group>
         <el-button-group size="small" style="margin-left: 12px;">
           <el-button :type="sortOrder === 'desc' ? 'primary' : ''" @click="sortOrder = 'desc'; loadData()">降序</el-button>

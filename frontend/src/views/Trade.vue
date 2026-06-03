@@ -194,6 +194,8 @@ async function handleSubmit(data: { price: number; quantity: number }) {
     if (direction.value === 'BUY') {
       await tradeStore.buy({
         stockCode: selectedStock.value.code,
+        stockName: selectedStock.value.name,
+        market: selectedStock.value.market === 'A' ? 'A_STOCK' : 'NASDAQ',
         direction: 'BUY',
         orderType: 'LIMIT',
         price: data.price,
@@ -203,6 +205,8 @@ async function handleSubmit(data: { price: number; quantity: number }) {
     } else {
       await tradeStore.sell({
         stockCode: selectedStock.value.code,
+        stockName: selectedStock.value.name,
+        market: selectedStock.value.market === 'A' ? 'A_STOCK' : 'NASDAQ',
         direction: 'SELL',
         orderType: 'LIMIT',
         price: data.price,

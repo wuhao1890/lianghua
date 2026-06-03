@@ -28,8 +28,11 @@ export function getGoldProducts() {
   return request.get('/stock/gold/products')
 }
 
-export function getGoldLatest(code: string = 'hf_GC') {
-  return request.get('/stock/gold/latest', { params: { code } })
+export function getGoldLatest(code: string = 'hf_GC', options: { silentError?: boolean } = {}) {
+  return request.get('/stock/gold/latest', {
+    params: { code },
+    silentError: options.silentError
+  } as any)
 }
 
 export function getGoldHistory(code: string = 'hf_GC', days: number = 30) {

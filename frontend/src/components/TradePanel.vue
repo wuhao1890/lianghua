@@ -5,8 +5,8 @@
       <div class="form-label">委托价格</div>
       <div class="price-input-group">
         <el-radio-group v-model="orderType" size="small" class="type-radio">
-          <el-radio-button label="LIMIT">限价</el-radio-button>
-          <el-radio-button label="MARKET">市价</el-radio-button>
+          <el-radio-button value="LIMIT">限价</el-radio-button>
+          <el-radio-button value="MARKET">市价</el-radio-button>
         </el-radio-group>
         <el-input-number
           v-model="price"

@@ -56,11 +56,11 @@
             <div class="card-header">
               <span>收益曲线</span>
               <el-radio-group v-model="profitRange" size="small" @change="loadProfitRecords">
-                <el-radio-button label="1w">近1周</el-radio-button>
-                <el-radio-button label="1m">近1月</el-radio-button>
-                <el-radio-button label="3m">近3月</el-radio-button>
-                <el-radio-button label="1y">近1年</el-radio-button>
-                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button value="1w">近1周</el-radio-button>
+                <el-radio-button value="1m">近1月</el-radio-button>
+                <el-radio-button value="3m">近3月</el-radio-button>
+                <el-radio-button value="1y">近1年</el-radio-button>
+                <el-radio-button value="all">全部</el-radio-button>
               </el-radio-group>
             </div>
           </template>

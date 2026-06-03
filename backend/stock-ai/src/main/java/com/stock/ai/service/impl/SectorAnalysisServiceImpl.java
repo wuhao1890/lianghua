@@ -20,7 +20,7 @@ import java.util.*;
 @Service
 public class SectorAnalysisServiceImpl implements SectorAnalysisService {
 
-    private static final String STOCK_SERVICE_URL = "http://localhost:8082";
+    private static final String STOCK_SERVICE_URL = "http://localhost:8080";
 
     /** 最后一次分析结果缓存 */
     private SectorAnalysisResult lastResult;

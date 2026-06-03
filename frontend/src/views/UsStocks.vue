@@ -113,7 +113,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh, TrendCharts, SortDown, SortUp } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getStockList } from '@/api/stock'
+import { getSinaUSStocks } from '@/api/stock'
 import { formatPrice, formatPercent, formatNumber, getColor } from '@/utils/format'
 import type { StockInfo } from '@/types'
 
@@ -146,15 +146,33 @@ function handleSearch() {
 async function loadData() {
   loading.value = true
   try {
-    const res = await getStockList({
-      market: 'NASDAQ',
-      page: currentPage.value,
-      pageSize: pageSize.value,
-      keyword: searchKeyword.value || undefined
-    })
-    const data = res.data.data
+    const res = await getSinaUSStocks(currentPage.value, pageSize.value)
+    const data = res.data
     if (data) {
-      let list = [...data.list]
+      let list = (data.data || []).map((s: any) => ({
+        code: String(s.code || '').toUpperCase(),
+        name: s.name,
+        market: 'US',
+        currentPrice: s.current,
+        openPrice: s.open,
+        closePrice: s.prevClose,
+        highPrice: s.high,
+        lowPrice: s.low,
+        changePercent: s.changePercent,
+        changeAmount: s.change,
+        volume: s.volume,
+        turnover: s.amount,
+        turnoverRate: 0,
+        pe: 0,
+        pb: 0,
+        marketCap: 0,
+        totalShares: 0,
+        circulateShares: 0
+      })) as StockInfo[]
+      if (searchKeyword.value.trim()) {
+        const kw = searchKeyword.value.trim().toLowerCase()
+        list = list.filter(s => s.code.toLowerCase().includes(kw) || s.name.toLowerCase().includes(kw))
+      }
       // 客户端排序
       list.sort((a: any, b: any) => {
         const va = safeScore(a[sortField.value])
@@ -162,7 +180,7 @@ async function loadData() {
         return sortOrder.value === 'desc' ? vb - va : va - vb
       })
       stockList.value = list
-      total.value = data.total
+      total.value = data.total || list.length
     }
   } catch (e: any) {
     ElMessage.error(e.message || '加载美股数据失败')
