@@ -75,6 +75,11 @@ function Get-Value($Object, [string]$Property, $Fallback) {
 
 function ConvertTo-JsonText($Value) { return ($Value | ConvertTo-Json -Depth 100 -Compress) }
 
+function ConvertFrom-Base64Utf8([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+  return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+}
+
 function ConvertTo-SqlUtf8HexLiteral([string]$Value) {
   $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
   $hex = -join ($bytes | ForEach-Object { $_.ToString("x2") })
@@ -115,6 +120,7 @@ CREATE TABLE IF NOT EXISTS ai_lab_iteration (
 }
 
 function Save-StateToMysql([long]$UserId, [object]$State) {
+  $State = Normalize-LabState $State
   $jsonSql = ConvertTo-SqlUtf8HexLiteral (ConvertTo-JsonText $State)
   $generation = [int](Get-Value $State "generation" 0)
   $iterationCount = [int](Get-Value $State "iterationCount" $generation)
@@ -145,16 +151,74 @@ function Save-IterationToMysql([long]$UserId, [object]$State, [object]$Record) {
 }
 
 function Get-LocalStates {
-  $rows = Invoke-MysqlText "SELECT user_id, state_json FROM ai_lab_state;"
+  $rows = Invoke-MysqlText "SELECT user_id, REPLACE(REPLACE(TO_BASE64(state_json), CHAR(10), ''), CHAR(13), '') FROM ai_lab_state WHERE user_id > 0;"
   $states = @()
   foreach ($row in $rows) {
     if ([string]::IsNullOrWhiteSpace($row)) { continue }
     $parts = $row -split "`t", 2
     if ($parts.Count -lt 2) { continue }
-    try { $states += [pscustomobject]@{ userId = [long]$parts[0]; state = $parts[1] | ConvertFrom-Json } }
+    try {
+      $userId = [long]$parts[0]
+      if ($userId -le 0) { continue }
+      $json = ConvertFrom-Base64Utf8 $parts[1]
+      $states += [pscustomobject]@{ userId = $userId; state = Normalize-LabState ($json | ConvertFrom-Json) }
+    }
     catch { Write-Log "skip invalid local state for user $($parts[0]): $($_.Exception.Message)" }
   }
   return $states
+}
+
+function Test-ObjectArray($Value) {
+  if ($null -eq $Value) { return $true }
+  if (!($Value -is [System.Array])) { return $false }
+  foreach ($item in @($Value)) {
+    if ($null -eq $item) { continue }
+    if ($item -is [string]) { return $false }
+  }
+  return $true
+}
+
+function Normalize-LabState([object]$State) {
+  if ($null -eq $State) {
+    $State = [pscustomobject]@{}
+  }
+  $generation = [int](Get-Value $State "generation" 0)
+  $iterationCount = [int](Get-Value $State "iterationCount" $generation)
+  $capital = [decimal](Get-Value $State "capital" 100000)
+  $intervalMinutes = [int](Get-Value $State "intervalMinutes" 5)
+  $assetsOk = Test-ObjectArray (Get-Value $State "assets" @())
+  $experimentsOk = Test-ObjectArray (Get-Value $State "experiments" @())
+  $logsOk = Test-ObjectArray (Get-Value $State "evolutionLog" @())
+  $customOk = Test-ObjectArray (Get-Value $State "customStrategies" @())
+  $champion = Get-Value $State "champion" $null
+  if ($champion -is [string]) { $champion = $null }
+
+  if (!$assetsOk -or !$experimentsOk -or !$logsOk -or !$customOk) {
+    Write-Log "normalizing corrupted lab state at generation=$generation"
+    return [pscustomobject]@{
+      generation = $generation
+      iterationCount = $iterationCount
+      capital = $capital
+      intervalMinutes = $intervalMinutes
+      assets = @(Get-SeedAssets)
+      experiments = @()
+      evolutionLog = @([pscustomobject]@{
+        id = "$(Get-Date -UFormat %s)-repair"
+        title = "Local scheduler repaired corrupted cloud state"
+        detail = "Rebuilt object arrays from real public quote data before continuing iteration."
+      })
+      champion = $null
+      lastRunAt = Get-Value $State "lastRunAt" $null
+      updatedAt = Get-Value $State "updatedAt" $null
+      customStrategies = @()
+    }
+  }
+  if ($null -eq $State.assets) { $State | Add-Member -NotePropertyName assets -NotePropertyValue @() -Force }
+  if ($null -eq $State.experiments) { $State | Add-Member -NotePropertyName experiments -NotePropertyValue @() -Force }
+  if ($null -eq $State.evolutionLog) { $State | Add-Member -NotePropertyName evolutionLog -NotePropertyValue @() -Force }
+  if ($null -eq $State.customStrategies) { $State | Add-Member -NotePropertyName customStrategies -NotePropertyValue @() -Force }
+  if ($champion -ne (Get-Value $State "champion" $null)) { $State.champion = $champion }
+  return $State
 }
 
 function Score-Experiment([object]$Experiment) {
@@ -304,7 +368,11 @@ try {
   $headers = @{ "X-Sync-Token" = $SyncToken }
   $cloudExport = Invoke-JsonGetUtf8 -Uri "$CloudBaseUrl/api/sync/ai-lab/export" -Headers $headers
   $cloudStates = @($cloudExport.data.states)
-  foreach ($item in $cloudStates) { Save-StateToMysql -UserId ([long]$item.userId) -State $item.state }
+  foreach ($item in $cloudStates) {
+    $cloudUserId = [long](Get-Value $item "userId" 0)
+    if ($cloudUserId -le 0) { continue }
+    Save-StateToMysql -UserId $cloudUserId -State $item.state
+  }
   Write-Log "cloud states pulled: $($cloudStates.Count)"
   $localStates = @(Get-LocalStates)
   $importStates = @(); $importIterations = @()

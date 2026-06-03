@@ -141,7 +141,8 @@ async function jsonBody(req: Request) {
 }
 
 function syncAllowed(req: Request) {
-  const expected = currentEnv.LIANGHUA_SYNC_TOKEN || "lianghua-local-sync-20260603";
+  const expected = currentEnv.LIANGHUA_SYNC_TOKEN;
+  if (!expected || expected === "set-this-in-cloudflare-pages-environment") return false;
   return req.headers.get("x-sync-token") === expected;
 }
 
@@ -487,6 +488,24 @@ async function markDirtyUser(userId: number) {
     users.push(userId);
     await store.setJSON("ai-lab-dirty-users", users);
   }
+}
+
+function isPlainObject(value: unknown): value is AnyRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isGoodObjectArray(value: unknown) {
+  return Array.isArray(value) && value.every((item) => isPlainObject(item));
+}
+
+function isValidLabStateShape(state: unknown) {
+  if (!isPlainObject(state)) return false;
+  if (!isGoodObjectArray(state.assets || [])) return false;
+  if (!isGoodObjectArray(state.experiments || [])) return false;
+  if (!isGoodObjectArray(state.evolutionLog || [])) return false;
+  if (state.customStrategies != null && !isGoodObjectArray(state.customStrategies)) return false;
+  if (state.champion != null && !isPlainObject(state.champion)) return false;
+  return true;
 }
 
 async function saveLabState(userId: number, data: AnyRecord) {
@@ -1026,6 +1045,9 @@ async function route(req: Request) {
     const iterations = Array.isArray(data.iterations) ? data.iterations : [];
     for (const item of states) {
       if (item?.userId && item?.state) {
+        if (!isValidLabStateShape(item.state)) {
+          return send({ userId: Number(item.userId) }, "同步状态结构无效，已拒绝写入", 400);
+        }
         await store.setJSON(`ai-lab-state:${Number(item.userId)}`, {
           ...item.state,
           syncedAt: new Date().toISOString()
@@ -1034,6 +1056,12 @@ async function route(req: Request) {
     }
     for (const item of iterations) {
       if (item?.userId && item?.record) {
+        if (item.record.champion != null && !isPlainObject(item.record.champion)) {
+          return send({ userId: Number(item.userId) }, "同步迭代冠军结构无效，已拒绝写入", 400);
+        }
+        if (item.record.experiments != null && !isGoodObjectArray(item.record.experiments)) {
+          return send({ userId: Number(item.userId) }, "同步迭代策略结构无效，已拒绝写入", 400);
+        }
         const key = `ai-lab-iterations:${Number(item.userId)}`;
         const history = await store.get(key, { type: "json" }) || [];
         history.unshift(item.record);
