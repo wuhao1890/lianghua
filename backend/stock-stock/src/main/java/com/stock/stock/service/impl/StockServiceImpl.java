@@ -29,9 +29,15 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @Service
@@ -488,5 +494,113 @@ public class StockServiceImpl extends ServiceImpl<StockInfoMapper, StockInfo> im
         dto.setOpenPrice(info.getOpenPrice());
         dto.setPrevClose(info.getPrevClose());
         return dto;
+    }
+
+    /**
+     * 获取资金流向（东财API）
+     * 返回主力净流入、超大单、大单、中单、小单
+     */
+    @Override
+    public Map<String, Object> getCapitalFlow(String code) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            // 东财资金流向API - 取当天最后一条（收盘数据）
+            String secid = code.startsWith("6") ? "1." + code : "0." + code;
+            String url = "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?lmt=1&klt=1&secid=" + secid
+                    + "&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63";
+            
+            String body = fetchUrl(url);
+            if (body == null || body.isEmpty()) {
+                return result;
+            }
+            
+            JSONObject json = JSONObject.parseObject(body);
+            JSONObject data = json.getJSONObject("data");
+            if (data != null) {
+                Object klines = data.get("klines");
+                if (klines instanceof List) {
+                    List<?> list = (List<?>) klines;
+                    if (!list.isEmpty()) {
+                        // kline格式: "时间,主力净流入,?,?,大单净流入,超大单净流入,总成交额"
+                        String lastLine = list.get(list.size() - 1).toString();
+                        String[] f = lastLine.split(",");
+                        if (f.length >= 6) {
+                            result.put("mainForce", parseDouble(f[1]) / 10000); // 主力净流入(万元)
+                            result.put("superLarge", parseDouble(f[5]) / 10000); // 超大单净流入
+                            result.put("large", parseDouble(f[4]) / 10000);      // 大单净流入
+                            result.put("medium", parseDouble(f[3]) / 10000);     // 中单净流入
+                            result.put("small", parseDouble(f[2]) / 10000);      // 小单净流入
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("获取资金流向失败 {}: {}", code, e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 获取公司信息（东财API）
+     * 返回公司简介、主营业务、行业、上市日期等
+     */
+    @Override
+    public Map<String, Object> getCompanyInfo(String code) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            // 东财公司信息API
+            String secid = code.startsWith("6") ? "1." + code : "0." + code;
+            String url = "https://emweb.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code=" + secid;
+            
+            String body = fetchUrl(url);
+            if (body == null || body.isEmpty()) {
+                return result;
+            }
+            
+            JSONObject json = JSONObject.parseObject(body);
+            JSONObject data = json.getJSONObject("jbzl");
+            if (data != null) {
+                result.put("profile", data.getString("gsjj")); // 公司简介
+                result.put("business", data.getString("zyyw")); // 主营业务
+                result.put("industry", data.getString("sshy")); // 所属行业
+                result.put("listDate", data.getString("ssrq")); // 上市日期
+                result.put("employees", data.getString("ygzs")); // 员工人数
+                result.put("registeredCapital", data.getString("zczb")); // 注册资本
+                result.put("chairman", data.getString("frdb")); // 法人代表/董事长
+            }
+        } catch (Exception e) {
+            log.warn("获取公司信息失败 {}: {}", code, e.getMessage());
+        }
+        return result;
+    }
+
+    private String fetchUrl(String url) {
+        try {
+            Request request = new Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .header("Referer", "https://eastmoney.com")
+                    .build();
+            
+            Response response = httpClient.newCall(request).execute();
+            if (!response.isSuccessful()) {
+                log.warn("请求失败 {}: {}", url, response.code());
+                return null;
+            }
+            String body = response.body().string();
+            response.close();
+            return body;
+        } catch (Exception e) {
+            log.warn("请求URL失败 {}: {}", url, e.getMessage());
+            return null;
+        }
+    }
+
+    private double parseDouble(String s) {
+        try {
+            return Double.parseDouble(s.trim());
+        } catch (Exception e) {
+            return 0;
+        }
     }
 }

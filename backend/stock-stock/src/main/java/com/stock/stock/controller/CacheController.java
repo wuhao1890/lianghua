@@ -50,4 +50,46 @@ public class CacheController {
         }
         return ResponseEntity.ok(result);
     }
+
+    /**
+     * 清理错误的K线数据并重新同步
+     * POST /api/cache/clean-kline
+     */
+    @PostMapping("/clean-kline")
+    public ResponseEntity<Map<String, Object>> cleanKline() {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            int deleted = dataCacheService.cleanInvalidKlineData();
+            result.put("code", 200);
+            result.put("message", "清理完成，已删除" + deleted + "条错误数据");
+            result.put("deleted", deleted);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 清空所有K线数据并重新从新浪获取真实数据
+     * POST /api/cache/reset-kline
+     */
+    @PostMapping("/reset-kline")
+    public ResponseEntity<Map<String, Object>> resetKline() {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            // 1. 清空所有数据
+            int deleted = dataCacheService.clearAllKlineData();
+            // 2. 立即从新浪重新获取
+            Map<String, Object> syncResult = dataCacheService.triggerCache();
+            result.put("code", 200);
+            result.put("message", "重置完成");
+            result.put("deleted", deleted);
+            result.put("syncResult", syncResult);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
 }

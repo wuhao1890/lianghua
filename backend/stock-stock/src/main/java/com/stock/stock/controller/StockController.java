@@ -145,4 +145,46 @@ public class StockController {
             return ResponseEntity.ok(result);
         }
     }
+
+    /**
+     * 获取资金流向
+     * GET /api/stock/flow/{code}
+     * 从东方财富API获取真实资金流向数据
+     */
+    @GetMapping("/flow/{code}")
+    public ResponseEntity<Map<String, Object>> flow(@PathVariable String code) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            Map<String, Object> flowData = stockService.getCapitalFlow(code);
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", flowData);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
+
+    /**
+     * 获取公司信息
+     * GET /api/stock/company/{code}
+     * 从东方财富API获取真实公司基本信息
+     */
+    @GetMapping("/company/{code}")
+    public ResponseEntity<Map<String, Object>> company(@PathVariable String code) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            Map<String, Object> companyData = stockService.getCompanyInfo(code);
+            result.put("code", 200);
+            result.put("message", "查询成功");
+            result.put("data", companyData);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("code", 500);
+            result.put("message", e.getMessage());
+            return ResponseEntity.ok(result);
+        }
+    }
 }

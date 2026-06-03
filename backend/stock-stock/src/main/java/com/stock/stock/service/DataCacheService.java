@@ -117,8 +117,8 @@ public class DataCacheService {
             sinaSymbol = "sz" + code;
         }
 
-        String url = "http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
-                + "CN_MarketData.getKLineData?symbol=" + sinaSymbol + "&datalen=" + datalen;
+        String url = "https://quotes.sina.cn/cn/api/json_v2.php/"
+                + "CN_MarketDataService.getKLineData?symbol=" + sinaSymbol + "&scale=240&datalen=" + datalen;
 
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
@@ -256,5 +256,29 @@ public class DataCacheService {
         result.putAll(cacheStats);
         result.put("lastSyncDate", lastSyncDate);
         return result;
+    }
+
+    /**
+     * 清理无效的K线数据（日期在未来或数据异常）
+     * 删除所有tradeDate > 今天 的记录
+     */
+    public int cleanInvalidKlineData() {
+        LocalDate today = LocalDate.now();
+        // 删除所有日期在未来的数据
+        int deleted = stockDailyMapper.delete(
+                new LambdaQueryWrapper<StockDaily>()
+                        .gt(StockDaily::getTradeDate, today));
+        log.info("清理无效K线数据: 删除{}条(日期>{})", deleted, today);
+        return deleted;
+    }
+
+    /**
+     * 清空所有K线数据并重新从新浪获取真实数据
+     */
+    public int clearAllKlineData() {
+        // 删除所有K线数据
+        int deleted = stockDailyMapper.delete(new LambdaQueryWrapper<>());
+        log.info("清空所有K线数据: 删除{}条", deleted);
+        return deleted;
     }
 }

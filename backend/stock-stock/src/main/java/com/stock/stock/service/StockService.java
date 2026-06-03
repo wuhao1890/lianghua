@@ -60,4 +60,14 @@ public interface StockService extends IService<StockInfo> {
      * 保存K线数据
      */
     void saveKlineData(String stockCode, List<KlineData> klineDataList);
+
+    /**
+     * 获取资金流向（东财API）
+     */
+    Map<String, Object> getCapitalFlow(String code);
+
+    /**
+     * 获取公司信息（东财API）
+     */
+    Map<String, Object> getCompanyInfo(String code);
 }
