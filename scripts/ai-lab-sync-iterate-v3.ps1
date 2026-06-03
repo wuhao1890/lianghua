@@ -435,11 +435,11 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       $item = $experiment[0]
       $price = Get-AssetPriceFor $State $item
       if ($price -gt 0) {
-        $trade.status = "已卖出"
-        $trade.action = "卖出"
-        $trade.sellPrice = $price
-        $trade.closedAt = $now
-        $trade.profit = [math]::Round(($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0), 2)
+        $trade | Add-Member -NotePropertyName status -NotePropertyValue "已卖出" -Force
+        $trade | Add-Member -NotePropertyName action -NotePropertyValue "卖出" -Force
+        $trade | Add-Member -NotePropertyName sellPrice -NotePropertyValue $price -Force
+        $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $now -Force
+        $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round(($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0), 2)) -Force
       }
     }
   }
