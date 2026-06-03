@@ -75,7 +75,7 @@ function blobStore() {
   };
 }
 
-function send(data: any = null, message = "success", code = 200) {
+function send(data: any = null, message = "成功", code = 200) {
   return Response.json({ code, message, data });
 }
 
@@ -863,8 +863,14 @@ function signalFor(stock: AnyRecord): { date: string; type: Signal; strength: nu
     type,
     strength: Math.min(95, Math.max(45, Math.round(Math.abs(stock.changePercent || 0) * 12 + 55))),
     indicator: "REALTIME_TECH",
-    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${stock.changePercent || 0}%，技术信号 ${type}`
+    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${stock.changePercent || 0}%，技术信号 ${signalText(type)}`
   };
+}
+
+function signalText(signal: Signal) {
+  if (signal === "BUY") return "买入";
+  if (signal === "SELL") return "卖出";
+  return "观望";
 }
 
 function signalForV2(stock: AnyRecord): AnyRecord {
@@ -881,14 +887,14 @@ function signalForV2(stock: AnyRecord): AnyRecord {
     signal: type,
     strength: Math.min(5, Math.max(1, Math.round(Math.abs(pct) + 2))),
     indicator: "REALTIME_TECH",
-    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${pct.toFixed(2)}%，技术信号 ${type}`,
+    message: `基于真实实时行情：${stock.name || stock.code} 当前涨跌幅 ${pct.toFixed(2)}%，技术信号 ${signalText(type)}`,
     description: `MA、MACD、RSI、KDJ、BOLL 根据当前真实报价变化生成即时技术面研判。`,
     indicatorSignals: {
-      MA: `均线方向：涨跌幅 ${pct.toFixed(2)}%，短周期趋势${ma === "BUY" ? "偏强" : ma === "SELL" ? "转弱" : "震荡"} - ${ma}`,
-      MACD: `动量研判：价格动能${macd === "BUY" ? "增强" : macd === "SELL" ? "减弱" : "中性"} - ${macd}`,
-      RSI: `强弱研判：${rsi === "BUY" ? "短线超跌修复" : rsi === "SELL" ? "短线过热回落" : "强弱均衡"} - ${rsi}`,
-      KDJ: `短线节奏：${kdj === "BUY" ? "金叉倾向" : kdj === "SELL" ? "死叉倾向" : "等待方向"} - ${kdj}`,
-      BOLL: `布林位置：${boll === "BUY" ? "接近下轨反弹" : boll === "SELL" ? "接近上轨回落" : "中轨附近震荡"} - ${boll}`
+      MA: `均线方向：涨跌幅 ${pct.toFixed(2)}%，短周期趋势${ma === "BUY" ? "偏强" : ma === "SELL" ? "转弱" : "震荡"} - ${signalText(ma)}`,
+      MACD: `动量研判：价格动能${macd === "BUY" ? "增强" : macd === "SELL" ? "减弱" : "中性"} - ${signalText(macd)}`,
+      RSI: `强弱研判：${rsi === "BUY" ? "短线超跌修复" : rsi === "SELL" ? "短线过热回落" : "强弱均衡"} - ${signalText(rsi)}`,
+      KDJ: `短线节奏：${kdj === "BUY" ? "金叉倾向" : kdj === "SELL" ? "死叉倾向" : "等待方向"} - ${signalText(kdj)}`,
+      BOLL: `布林位置：${boll === "BUY" ? "接近下轨反弹" : boll === "SELL" ? "接近上轨回落" : "中轨附近震荡"} - ${signalText(boll)}`
     }
   };
 }
@@ -969,7 +975,7 @@ async function analyze(code: string) {
     sentimentScore: bundle.sentimentScore,
     targetPrice: current ? `${Number((current * 0.95).toFixed(2))}-${Number((current * 1.08).toFixed(2))}` : "以真实行情为准",
     analysis: `综合研判采用真实行情、东方财富/新浪公开新闻、巨潮公告、东方财富股吧公开讨论。技术分${techScore}，新闻分${bundle.newsScore}，社区影响分${bundle.communityScore}，公告事件分${bundle.announcementScore}，综合分${score}。`,
-    modelUsed: "Cloudflare Quant Sentiment Engine",
+    modelUsed: "公网量化舆情引擎",
     modelAvailable: true,
     quantDecision: {
       signal: finalSignal,
@@ -1098,13 +1104,13 @@ async function route(req: Request) {
   if (method === "GET" && path === "/stock/sina/a-stocks") {
     const page = Number(url.searchParams.get("page") || 1);
     const pageSize = Number(url.searchParams.get("pageSize") || 20);
-    return Response.json({ code: 200, message: "success", data: await fetchSina(A_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: A_STOCKS.length });
+    return Response.json({ code: 200, message: "成功", data: await fetchSina(A_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: A_STOCKS.length });
   }
 
   if (method === "GET" && path === "/stock/sina/us-stocks") {
     const page = Number(url.searchParams.get("page") || 1);
     const pageSize = Number(url.searchParams.get("pageSize") || 20);
-    return Response.json({ code: 200, message: "success", data: await fetchSina(US_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: US_STOCKS.length });
+    return Response.json({ code: 200, message: "成功", data: await fetchSina(US_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: US_STOCKS.length });
   }
 
   if (method === "GET" && path === "/stock/sina/indices") return send(await fetchSina(INDICES));
@@ -1249,7 +1255,7 @@ async function route(req: Request) {
   const fundDetail = path.match(/^\/stock\/fund\/([^/]+)$/);
   if (method === "GET" && fundDetail) {
     const fund = await fetchFundRealtime(fundDetail[1]);
-    return fund ? send(fund) : send(null, "fund public data unavailable", 404);
+    return fund ? send(fund) : send(null, "基金公开数据暂不可用", 404);
   }
   if (method === "GET" && path === "/stock/gold/products") return send(METALS);
   if (method === "GET" && path === "/stock/gold/latest") return send(await fetchGoldQuote(url.searchParams.get("code") || "hf_GC"));
@@ -1259,12 +1265,12 @@ async function route(req: Request) {
   const sectorDetail = path.match(/^\/stock\/sectors\/([^/]+)$/);
   if (method === "GET" && sectorDetail) {
     const sector = (await fetchSectorRows()).find((item) => item.sectorCode === sectorDetail[1]);
-    return sector ? send(sector) : send(null, "sector unavailable", 404);
+    return sector ? send(sector) : send(null, "板块公开数据暂不可用", 404);
   }
   const sectorStocks = path.match(/^\/stock\/sectors\/([^/]+)\/stocks$/);
   if (method === "GET" && sectorStocks) {
     const sector = (await fetchSectorRows()).find((item) => item.sectorCode === sectorStocks[1]);
-    return sector ? send(sector.stocks) : send([], "success");
+    return sector ? send(sector.stocks) : send([], "成功");
   }
 
   if (path.startsWith("/stock/fund/list")) return send({ list: [], total: 0, page: 1, pageSize: 20 });

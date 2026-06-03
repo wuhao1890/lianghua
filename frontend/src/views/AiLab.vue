@@ -82,14 +82,58 @@
           <div><span>回撤</span><strong>{{ formatPercent(champion.drawdownPct) }}</strong></div>
           <div><span>建议仓位</span><strong>{{ champion.position }}%</strong></div>
           <div><span>模拟投入</span><strong>{{ formatMoney(simulatedPosition) }}</strong></div>
+          <div><span>买入时间</span><strong>{{ tradePlanFor(champion).buyTime }}</strong></div>
+          <div><span>买入价格</span><strong>{{ tradePlanFor(champion).buyPrice }}</strong></div>
+          <div><span>卖出时间</span><strong>{{ tradePlanFor(champion).sellTime }}</strong></div>
+          <div><span>目标卖价</span><strong>{{ tradePlanFor(champion).sellPrice }}</strong></div>
           <div><span>历史盈利</span><strong :class="historicalProfit >= 0 ? 'up' : 'down'">{{ formatMoney(historicalProfit) }}</strong></div>
           <div><span>实时盈利</span><strong :class="realtimeProfit >= 0 ? 'up' : 'down'">{{ formatMoney(realtimeProfit) }}</strong></div>
           <div><span>未来验证</span><strong :class="futureProfit >= 0 ? 'up' : 'down'">{{ formatMoney(futureProfit) }}</strong></div>
-          <div class="wide"><span>买入规则</span><p>{{ champion.entryRule }}</p></div>
-          <div class="wide"><span>卖出规则</span><p>{{ champion.exitRule }}</p></div>
+          <div class="wide"><span>现在怎么做</span><p>{{ tradePlanFor(champion).action }}</p></div>
+          <div class="wide"><span>买入依据</span><p>{{ zhText(champion.entryRule) }}</p></div>
+          <div class="wide"><span>卖出依据</span><p>{{ zhText(champion.exitRule) }}</p></div>
+          <div class="wide"><span>收益来源</span><p>{{ tradePlanFor(champion).profitSource }}</p></div>
         </div>
 
         <el-empty v-else :image-size="72" description="点击自动实验后生成最优策略" />
+      </article>
+
+      <article class="panel top-five-panel">
+        <div class="panel-head">
+          <div>
+            <h3>前五最优组合</h3>
+            <span>每代自动比较股票、黄金、基金和不同策略；盈利能力下降会降级。</span>
+          </div>
+        </div>
+        <div class="top-five-list">
+          <article v-for="(item, index) in topFiveStrategies" :key="item.id" class="top-five-item" @click="goAssetDetail(item)">
+            <b>{{ index + 1 }}</b>
+            <div>
+              <strong>{{ item.assetName }} · {{ zhText(item.strategyName) }}</strong>
+              <span>{{ assetTypeText(item.assetType) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · 仓位 {{ item.position }}%</span>
+              <small>{{ tradePlanFor(item).action }}</small>
+            </div>
+            <em :class="item.returnPct >= 0 ? 'up' : 'down'">{{ formatPercent(item.returnPct) }}</em>
+          </article>
+        </div>
+      </article>
+
+      <article class="panel trade-ledger-panel">
+        <div class="panel-head">
+          <div>
+            <h3>模拟成交流水</h3>
+            <span>模型迭代后自动记录买入、卖出和降级处理。</span>
+          </div>
+        </div>
+        <div class="trade-ledger">
+          <div v-for="trade in simulatedTrades.slice(0, 8)" :key="trade.id" class="trade-row">
+            <strong>{{ trade.assetName }} · {{ zhText(trade.strategyName) }}</strong>
+            <span>{{ trade.action }} · {{ trade.status }} · {{ formatTime(trade.createdAt) }}</span>
+            <small>买入 {{ formatPrice(trade.buyPrice) }}，{{ trade.sellPrice ? `卖出 ${formatPrice(trade.sellPrice)}` : `计划 ${formatPrice(trade.plannedSellPrice)}` }}</small>
+            <em :class="trade.profit >= 0 ? 'up' : 'down'">{{ formatMoney(trade.profit) }}</em>
+          </div>
+        </div>
+        <el-empty v-if="!simulatedTrades.length" :image-size="60" description="暂无模拟成交" />
       </article>
 
       <article class="panel">
@@ -180,7 +224,7 @@
                 <span :class="asset.changePct >= 0 ? 'up' : 'down'">{{ formatPercent(asset.changePct) }}</span>
               </div>
               <el-progress :percentage="asset.aiScore" :stroke-width="7" :color="asset.aiScore >= 70 ? '#1f9d66' : '#d59b2d'" />
-              <p>{{ asset.reason }}</p>
+              <p>{{ zhText(asset.reason) }}</p>
             </article>
           </template>
           <div class="score-detail">
@@ -247,7 +291,7 @@
             </article>
           </template>
           <div class="score-detail">
-            <h4>{{ item.assetName }} · {{ item.strategyName }}</h4>
+            <h4>{{ item.assetName }} · {{ zhText(item.strategyName) }}</h4>
             <div v-for="score in item.factorScores" :key="score.name" class="score-detail-row">
               <div>
                 <strong>{{ zhText(score.name) }}</strong>
@@ -349,6 +393,25 @@ interface LabExperiment {
   factorScores: Array<{ name: string; score: number; reason: string }>
 }
 
+interface SimulatedTrade {
+  id: string
+  experimentId: string
+  assetCode: string
+  assetName: string
+  strategyName: string
+  action: string
+  status: string
+  generation: number
+  buyPrice: number
+  plannedSellPrice: number
+  sellPrice: number
+  amount: number
+  quantity: number
+  profit: number
+  createdAt: string
+  closedAt?: string
+}
+
 interface CustomStrategy {
   id: string
   name: string
@@ -368,6 +431,7 @@ const assets = ref<LabAsset[]>([])
 const experiments = ref<LabExperiment[]>([])
 const evolutionLog = ref<Array<{ id: string; title: string; detail: string }>>([])
 const iterationHistory = ref<any[]>([])
+const simulatedTrades = ref<SimulatedTrade[]>([])
 const customStrategies = ref<CustomStrategy[]>([])
 const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
 
@@ -381,13 +445,14 @@ const router = useRouter()
 const ranks = [
   { key: 'bronze', name: '青铜', range: '亏损或低效' },
   { key: 'silver', name: '白银', range: '稳住风险' },
-  { key: 'gold', name: '黄金', range: '正收益' },
-  { key: 'platinum', name: '铂金', range: '高收益低回撤' },
+  { key: 'platinum', name: '铂金', range: '正收益' },
+  { key: 'gold', name: '黄金', range: '高收益低回撤' },
   { key: 'king', name: '王者', range: '最高效策略' }
 ] as const
 
 const sortedAssets = computed(() => [...assets.value].sort((a, b) => b.aiScore - a.aiScore))
 const sortedExperiments = computed(() => [...experiments.value].sort((a, b) => b.score - a.score))
+const topFiveStrategies = computed(() => sortedExperiments.value.slice(0, 5))
 const champion = computed(() => sortedExperiments.value[0] || null)
 const bestReturn = computed(() => champion.value?.returnPct || 0)
 const simulatedPosition = computed(() => champion.value ? capital.value * (champion.value.position / 100) : 0)
@@ -477,6 +542,7 @@ function applyLabState(state: any) {
   assets.value = Array.isArray(state.assets) ? state.assets : []
   experiments.value = Array.isArray(state.experiments) ? state.experiments.map(hydrateExperiment) : []
   evolutionLog.value = Array.isArray(state.evolutionLog) ? state.evolutionLog : []
+  simulatedTrades.value = Array.isArray(state.simulatedTrades) ? state.simulatedTrades : []
   if (Array.isArray(state.customStrategies)) {
     customStrategies.value = state.customStrategies
     saveCustomStrategies()
@@ -514,6 +580,7 @@ async function persistLabState() {
     experiments: experiments.value,
     customStrategies: customStrategies.value,
     evolutionLog: evolutionLog.value,
+    simulatedTrades: simulatedTrades.value,
     champion: champion.value,
     lastRunAt: new Date().toISOString()
   }
@@ -531,6 +598,7 @@ async function persistIteration() {
     assets: assets.value,
     experiments: experiments.value,
     evolutionLog: evolutionLog.value,
+    simulatedTrades: simulatedTrades.value,
     champion: champion.value
   }
   saveLabStateLocal({
@@ -838,7 +906,7 @@ function evolveOnce(shouldPersist = true) {
     const nextDrawdown = Number(Math.max(0.2, item.drawdownPct * (item.returnPct > 0 ? 0.92 : 1.06) + Math.abs(assetMomentum) * 0.08).toFixed(2))
     const nextScore = scoreExperiment(item.score, nextReturn, nextDrawdown, asset?.sentimentScore || 50)
     const nextSignal: Signal = nextScore >= 65 ? 'BUY' : nextScore <= 42 ? 'SELL' : 'HOLD'
-    const nextRank = rankOf(nextScore, nextReturn, nextDrawdown)
+    const nextRank = item.returnPct > nextReturn ? downgradeRank(rankOf(nextScore, nextReturn, nextDrawdown)) : rankOf(nextScore, nextReturn, nextDrawdown)
     return {
       ...item,
       signal: nextSignal,
@@ -853,6 +921,7 @@ function evolveOnce(shouldPersist = true) {
       factorScores: factorScoresFor({ ...item, score: nextScore, returnPct: nextReturn, drawdownPct: nextDrawdown, signal: nextSignal })
     }
   })
+  executeSimulatedTrades(previous)
 
   const next = champion.value
   if (next) {
@@ -940,9 +1009,17 @@ function scoreExperiment(baseScore: number, returnPct: number, drawdownPct: numb
 
 function rankOf(score: number, returnPct = 0, drawdownPct = 0): RankKey {
   if (score >= 88 && returnPct >= 8 && drawdownPct <= 4) return 'king'
-  if (score >= 75 && returnPct >= 4) return 'platinum'
-  if (score >= 60 && returnPct >= 0) return 'gold'
+  if (score >= 75 && returnPct >= 4) return 'gold'
+  if (score >= 60 && returnPct >= 0) return 'platinum'
   if (score >= 45) return 'silver'
+  return 'bronze'
+}
+
+function downgradeRank(rank: RankKey): RankKey {
+  if (rank === 'king') return 'gold'
+  if (rank === 'gold') return 'platinum'
+  if (rank === 'platinum') return 'silver'
+  if (rank === 'silver') return 'bronze'
   return 'bronze'
 }
 
@@ -1100,6 +1177,77 @@ function formatTime(value?: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function assetPriceFor(item: LabExperiment) {
+  return Number(assets.value.find((asset) => asset.id === item.assetId || asset.code === item.assetCode)?.price || 0)
+}
+
+function tradePlanFor(item: LabExperiment) {
+  const price = assetPriceFor(item)
+  const amount = capital.value * (item.position / 100)
+  const target = price > 0 ? price * (1 + Math.max(item.returnPct, 1.2) / 100) : 0
+  const buyTime = item.signal === 'BUY' ? `第 ${item.generation} 代形成买入` : '暂不买入'
+  const sellTime = item.signal === 'SELL' ? `第 ${item.generation} 代触发卖出` : '达到目标价、综合分低于50或回撤扩大时卖出'
+  const action = item.signal === 'BUY'
+    ? `当前操作：用 ${formatMoney(amount)} 模拟买入，参考现价 ${formatPrice(price)}，目标卖价 ${formatPrice(target)}。`
+    : item.signal === 'SELL'
+      ? '当前操作：模型判断应卖出或空仓，已有模拟持仓会在本代卖出。'
+      : '当前操作：暂不买入，保持观察，等待分数或趋势确认。'
+  return {
+    buyTime,
+    sellTime,
+    buyPrice: price > 0 ? formatPrice(price) : '等待真实报价',
+    sellPrice: target > 0 ? formatPrice(target) : '等待真实报价',
+    action,
+    profitSource: `本代收益来自真实报价 ${formatPrice(price)}、建议仓位 ${item.position}%、策略模拟收益 ${formatPercent(item.returnPct)} 和回撤 ${formatPercent(item.drawdownPct)} 的综合测算。`
+  }
+}
+
+function executeSimulatedTrades(previousChampion: LabExperiment | null) {
+  const now = new Date().toISOString()
+  const bestIds = new Set(topFiveStrategies.value.map((item) => item.id))
+
+  for (const trade of simulatedTrades.value) {
+    if (trade.status !== '持仓中') continue
+    const item = experiments.value.find((target) => target.id === trade.experimentId)
+    const price = item ? assetPriceFor(item) : 0
+    const shouldClose = !item || item.signal === 'SELL' || !bestIds.has(trade.experimentId) || (previousChampion?.id === item.id && item.returnPct < previousChampion.returnPct)
+    if (shouldClose && price > 0) {
+      trade.status = item ? '已卖出' : '已淘汰卖出'
+      trade.action = '卖出'
+      trade.sellPrice = price
+      trade.closedAt = now
+      trade.profit = Number(((price - trade.buyPrice) * trade.quantity).toFixed(2))
+    }
+  }
+
+  for (const item of topFiveStrategies.value) {
+    if (item.signal !== 'BUY' || item.position <= 0) continue
+    if (simulatedTrades.value.some((trade) => trade.experimentId === item.id && trade.status === '持仓中')) continue
+    const price = assetPriceFor(item)
+    if (price <= 0) continue
+    const amount = capital.value * (item.position / 100)
+    const quantity = amount / price
+    simulatedTrades.value.unshift({
+      id: `${Date.now()}-${item.id}`,
+      experimentId: item.id,
+      assetCode: item.assetCode,
+      assetName: item.assetName,
+      strategyName: item.strategyName,
+      action: '买入',
+      status: '持仓中',
+      generation: generation.value,
+      buyPrice: price,
+      plannedSellPrice: Number((price * (1 + Math.max(item.returnPct, 1.2) / 100)).toFixed(4)),
+      sellPrice: 0,
+      amount,
+      quantity,
+      profit: 0,
+      createdAt: now
+    })
+  }
+  simulatedTrades.value = simulatedTrades.value.slice(0, 40)
 }
 
 function zhText(value?: string) {
@@ -1404,6 +1552,73 @@ function styleText(style?: string) {
     margin: 6px 0 0;
     color: #303133;
     line-height: 1.5;
+  }
+}
+
+.top-five-list,
+.trade-ledger {
+  display: grid;
+  gap: 10px;
+}
+
+.top-five-item,
+.trade-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+
+  b {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #eef6ff;
+    color: #2563eb;
+  }
+
+  strong,
+  span,
+  small {
+    display: block;
+  }
+
+  span,
+  small {
+    color: #606266;
+    line-height: 1.5;
+  }
+
+  small {
+    font-size: 12px;
+  }
+
+  em {
+    font-style: normal;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+}
+
+.top-five-item {
+  cursor: pointer;
+
+  &:hover {
+    border-color: #409eff;
+    background: #f7fbff;
+  }
+}
+
+.trade-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+
+  small {
+    grid-column: 1 / -1;
   }
 }
 
