@@ -84,6 +84,10 @@
             <el-icon><CreditCard /></el-icon>
             充值中心
           </el-menu-item>
+          <el-menu-item index="/alert-settings">
+            <el-icon><Message /></el-icon>
+            邮箱告警
+          </el-menu-item>
           <el-menu-item index="/ai-agent">
             <el-icon><Monitor /></el-icon>
             智能助手
@@ -108,6 +112,10 @@
               <el-dropdown-item command="dashboard">
                 <el-icon><Odometer /></el-icon>
                 仪表盘
+              </el-dropdown-item>
+              <el-dropdown-item command="alert-settings">
+                <el-icon><Message /></el-icon>
+                邮箱告警
               </el-dropdown-item>
               <el-dropdown-item divided command="logout">
                 <el-icon><SwitchButton /></el-icon>
@@ -144,6 +152,7 @@ import {
   Document,
   List,
   Management,
+  Message,
   Money,
   Monitor,
   Odometer,
@@ -161,7 +170,7 @@ const userStore = useUserStore()
 const stockPaths = ['/market', '/a-stocks', '/us-stocks']
 const assetPaths = ['/gold', '/funds']
 const tradePaths = ['/trade', '/position', '/history', '/analysis']
-const userPaths = ['/dashboard', '/recharge', '/ai-agent', '/admin/recharge']
+const userPaths = ['/dashboard', '/recharge', '/alert-settings', '/ai-agent', '/admin/recharge']
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/stock/')) return '/market'
@@ -186,6 +195,8 @@ function handleCommand(command: string) {
     }).catch(() => {})
   } else if (command === 'dashboard') {
     router.push('/dashboard')
+  } else if (command === 'alert-settings') {
+    router.push('/alert-settings')
   }
 }
 </script>

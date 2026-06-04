@@ -30,6 +30,7 @@ export interface LoginResponse {
   username: string
   nickname?: string
   role?: string
+  email?: string
   availableCash?: number
   initialCapital?: number
 }
@@ -182,6 +183,41 @@ export interface ProfitRecord {
   profitPercent: number
 }
 
+export interface HuabaoBrokerStatus {
+  brokerName: string
+  platformName: string
+  apiBase: string
+  clientId?: string
+  accountId?: string
+  clientIdMasked?: string
+  accountIdMasked?: string
+  tradingEnabled: boolean
+  officialDocsConfirmed: boolean
+  sandboxReady: boolean
+  cashTransferReady: boolean
+  ready: boolean
+  blockers: string[]
+  modeText: string
+  warning: string
+  updatedAt?: string | null
+}
+
+export interface RealTradeAttempt {
+  id: number
+  userId: number
+  brokerName: string
+  platformName: string
+  action: string
+  stockCode: string
+  stockName: string
+  price: number
+  quantity: number
+  amount: number
+  status: string
+  reason: string
+  createdAt: string
+}
+
 // ==================== 技术指标 ====================
 export interface TechnicalIndicator {
   name: string
@@ -245,9 +281,20 @@ export interface AiAnalysisResponse {
   daVOpinions: DaVOpinion[]
   daVMajority: DaVMajorityConsensus
   newsItems?: NewsItem[]
+  moneyFlow?: MoneyFlowAnalysis
   candidateStrategies?: CandidateStrategy[]
   selectedStrategy?: CandidateStrategy
   evolution?: StrategyEvolution
+}
+
+export interface MoneyFlowAnalysis {
+  bigOrderBuyAmount: number
+  bigOrderSellAmount: number
+  netBigOrderAmount: number
+  bigOrderDirection: string
+  expectedVolume: number
+  expectedVolumeChangePercent: number
+  basis: string
 }
 
 export interface QuantDecision {

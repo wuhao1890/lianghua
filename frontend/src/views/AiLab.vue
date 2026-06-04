@@ -655,7 +655,11 @@ async function scanStocks(): Promise<LabAsset[]> {
 }
 
 async function scanStockFallbackQuotes(): Promise<any[]> {
-  const codes = ['600519', '600036', '300750', '000858', '601318', '600276']
+  const codes = [
+    '600519', '600036', '601318', '600276', '000858', '002594',
+    '300033', '300059', '300274', '300308', '300750', '300760',
+    '688008', '688036', '688111', '688223', '688599', '688981'
+  ]
   const rows = await Promise.allSettled(codes.map(async (code) => {
     const data = (await getRealtimeQuote(code, { silentError: true })).data?.data
     return {

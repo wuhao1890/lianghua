@@ -7,6 +7,11 @@ type KVNamespaceLike = {
 };
 type PagesEnv = {
   LIANGHUA_STATE?: KVNamespaceLike;
+  LIANGHUA_SYNC_TOKEN?: string;
+  HUABAO_API_BASE?: string;
+  HUABAO_CLIENT_ID?: string;
+  HUABAO_ACCOUNT_ID?: string;
+  HUABAO_TRADING_ENABLED?: string;
 };
 type PagesContext = {
   request: Request;
@@ -27,7 +32,13 @@ const A_STOCKS = [
   "sh600438", "sh600460", "sh600470", "sh600482", "sh600487", "sh600498", "sh600521", "sh600547",
   "sh600570", "sh600660", "sh600703", "sh600745", "sh600760", "sh600809", "sh600862", "sh600893",
   "sh600905", "sh600918", "sh600926", "sh600941", "sh600989", "sh600999", "sz000001", "sz000002",
-  "sz000063", "sz000333", "sz000651", "sz000858", "sz002230", "sz002594", "sz300059", "sz300750"
+  "sz000063", "sz000333", "sz000651", "sz000858", "sz002230", "sz002594", "sz300014", "sz300015",
+  "sz300033", "sz300059", "sz300122", "sz300124", "sz300274", "sz300308", "sz300316", "sz300347",
+  "sz300408", "sz300433", "sz300450", "sz300454", "sz300496", "sz300498", "sz300502", "sz300628",
+  "sz300661", "sz300724", "sz300750", "sz300759", "sz300760", "sz300782", "sz300896", "sz300999",
+  "sh688008", "sh688009", "sh688012", "sh688036", "sh688041", "sh688052", "sh688063", "sh688111",
+  "sh688126", "sh688169", "sh688187", "sh688223", "sh688256", "sh688271", "sh688303", "sh688363",
+  "sh688390", "sh688396", "sh688599", "sh688981"
 ];
 const US_STOCKS = ["gb_aapl", "gb_msft", "gb_googl", "gb_amzn", "gb_nvda", "gb_tsla", "gb_meta"];
 const INDICES = ["sh000001", "sz399001", "sz399006", "sh000300"];
@@ -46,8 +57,10 @@ const SECTOR_GROUPS: Array<{ sectorCode: string; sectorName: string; codes: stri
   { sectorCode: "liquor", sectorName: "白酒消费", codes: ["sh600519", "sz000858", "sh600887", "sh600809"] },
   { sectorCode: "medicine", sectorName: "医药医疗", codes: ["sh600276", "sh600196", "sh600332", "sh600436"] },
   { sectorCode: "broker", sectorName: "证券保险", codes: ["sh601318", "sh600030", "sh601628", "sh600837", "sh601319", "sh601601"] },
-  { sectorCode: "new-energy", sectorName: "新能源", codes: ["sh601012", "sh600438", "sz002594", "sz300750"] },
-  { sectorCode: "tech", sectorName: "科技互联网", codes: ["sz000063", "sz002230", "sz300059", "sh600570", "sh600588"] },
+  { sectorCode: "new-energy", sectorName: "新能源", codes: ["sh601012", "sh600438", "sz002594", "sz300750", "sz300274", "sz300014", "sh688599"] },
+  { sectorCode: "tech", sectorName: "科技互联网", codes: ["sz000063", "sz002230", "sz300059", "sh600570", "sh600588", "sh688111", "sh688981", "sh688041"] },
+  { sectorCode: "chinext", sectorName: "创业板", codes: ["sz300033", "sz300059", "sz300122", "sz300274", "sz300308", "sz300408", "sz300433", "sz300450", "sz300496", "sz300750", "sz300760", "sz300896"] },
+  { sectorCode: "star", sectorName: "科创板", codes: ["sh688008", "sh688012", "sh688036", "sh688111", "sh688126", "sh688169", "sh688223", "sh688256", "sh688303", "sh688396", "sh688599", "sh688981"] },
   { sectorCode: "resource", sectorName: "资源能源", codes: ["sh600028", "sh601857", "sh601088", "sh601899", "sh600547"] },
   { sectorCode: "manufacture", sectorName: "高端制造", codes: ["sh600031", "sh600150", "sh600760", "sz000333", "sz000651"] }
 ];
@@ -173,6 +186,128 @@ async function ensureUser(username = "admin", password = "123456") {
   await blobStore().setJSON(`positions:${user.id}`, []);
   await blobStore().setJSON(`orders:${user.id}`, []);
   return user;
+}
+
+function defaultAlertSettings(user: AnyRecord = {}) {
+  return {
+    email: user.email || "",
+    emailEnabled: false,
+    kingTradeOnly: true,
+    includeTopFive: true,
+    updatedAt: null
+  };
+}
+
+async function alertSettings(userId: number) {
+  const store = blobStore();
+  const user = await store.get(`user-id:${userId}`, { type: "json" }) || await ensureUser();
+  const saved = await store.get(`ai-lab-alert-settings:${userId}`, { type: "json" });
+  return { ...defaultAlertSettings(user), ...(saved || {}) };
+}
+
+async function saveAlertSettings(userId: number, data: AnyRecord) {
+  const store = blobStore();
+  const user = await store.get(`user-id:${userId}`, { type: "json" }) || await ensureUser();
+  const email = String(data.email || "").trim();
+  const next = {
+    email,
+    emailEnabled: Boolean(data.emailEnabled),
+    kingTradeOnly: data.kingTradeOnly !== false,
+    includeTopFive: data.includeTopFive !== false,
+    updatedAt: new Date().toISOString()
+  };
+  await store.setJSON(`ai-lab-alert-settings:${userId}`, next);
+  await saveUser({ ...user, email });
+  const state = await labState(userId);
+  await saveLabState(userId, { ...state, alertSettings: next });
+  return next;
+}
+
+function defaultBrokerConfig() {
+  return {
+    brokerName: "华宝证券",
+    platformName: "华宝智投开放接口",
+    apiBase: currentEnv.HUABAO_API_BASE || "",
+    clientId: currentEnv.HUABAO_CLIENT_ID || "",
+    accountId: currentEnv.HUABAO_ACCOUNT_ID || "",
+    tradingEnabled: currentEnv.HUABAO_TRADING_ENABLED === "true",
+    officialDocsConfirmed: false,
+    sandboxReady: false,
+    cashTransferReady: false,
+    updatedAt: null
+  };
+}
+
+function maskValue(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 6) return `${text.slice(0, 1)}***${text.slice(-1)}`;
+  return `${text.slice(0, 3)}***${text.slice(-3)}`;
+}
+
+async function brokerConfig(userId: number) {
+  const saved = await blobStore().get(`broker-config:${userId}`, { type: "json" }) || {};
+  const merged = { ...defaultBrokerConfig(), ...saved };
+  return {
+    ...merged,
+    clientIdMasked: maskValue(merged.clientId),
+    accountIdMasked: maskValue(merged.accountId),
+    clientId: "",
+    accountId: ""
+  };
+}
+
+async function saveBrokerConfig(userId: number, data: AnyRecord) {
+  const next = {
+    brokerName: "华宝证券",
+    platformName: "华宝智投开放接口",
+    apiBase: String(data.apiBase || "").trim(),
+    clientId: String(data.clientId || "").trim(),
+    accountId: String(data.accountId || "").trim(),
+    tradingEnabled: Boolean(data.tradingEnabled),
+    officialDocsConfirmed: Boolean(data.officialDocsConfirmed),
+    sandboxReady: Boolean(data.sandboxReady),
+    cashTransferReady: Boolean(data.cashTransferReady),
+    updatedAt: new Date().toISOString()
+  };
+  await blobStore().setJSON(`broker-config:${userId}`, next);
+  return brokerConfig(userId);
+}
+
+async function realTradingGuard(userId: number) {
+  const raw = await blobStore().get(`broker-config:${userId}`, { type: "json" }) || defaultBrokerConfig();
+  const missing = [];
+  if (!raw.officialDocsConfirmed) missing.push("华宝证券官方开放接口文档未确认");
+  if (!raw.sandboxReady) missing.push("华宝证券测试环境未完成联调");
+  if (!raw.apiBase) missing.push("接口地址未配置");
+  if (!raw.clientId) missing.push("客户编号未配置");
+  if (!raw.accountId) missing.push("证券账户未配置");
+  if (!raw.tradingEnabled) missing.push("真实交易开关未开启");
+  return {
+    allowed: missing.length === 0,
+    missing,
+    config: raw
+  };
+}
+
+async function recordRealTradeAttempt(userId: number, action: string, data: AnyRecord, status: string, reason: string) {
+  const records = await blobStore().get(`real-trade-attempts:${userId}`, { type: "json" }) || [];
+  records.unshift({
+    id: Date.now(),
+    userId,
+    brokerName: "华宝证券",
+    platformName: "华宝智投开放接口",
+    action,
+    stockCode: data.stockCode || "",
+    stockName: data.stockName || "",
+    price: Number(data.price || 0),
+    quantity: Number(data.quantity || 0),
+    amount: Number(data.price || 0) * Number(data.quantity || 0),
+    status,
+    reason,
+    createdAt: new Date().toISOString()
+  });
+  await blobStore().setJSON(`real-trade-attempts:${userId}`, records.slice(0, 100));
 }
 
 async function fetchSina(codes: string[]) {
@@ -617,6 +752,29 @@ function consensus(items: Array<{ sentiment?: Sentiment; type?: Sentiment }>) {
   return { consensus: final, bullishCount, bearishCount, neutralCount };
 }
 
+function moneyFlowFromQuote(stock: AnyRecord, sentimentScore = 50) {
+  const volume = Number(stock.volume || 0);
+  const amount = Number(stock.amount || stock.turnover || 0);
+  const changePercent = Number(stock.changePercent || 0);
+  const pressure = Math.max(-1, Math.min(1, changePercent / 5 + (sentimentScore - 50) / 100));
+  const activeAmount = amount > 0 ? amount : volume * Number(stock.current || 0);
+  const buyRatio = Math.max(0.18, Math.min(0.82, 0.5 + pressure * 0.28));
+  const bigOrderBuyAmount = Math.round(activeAmount * buyRatio * 0.28);
+  const bigOrderSellAmount = Math.round(activeAmount * (1 - buyRatio) * 0.28);
+  const netBigOrderAmount = bigOrderBuyAmount - bigOrderSellAmount;
+  const expectedVolume = Math.round(volume * Math.max(0.65, Math.min(1.8, 1 + Math.abs(changePercent) / 8 + Math.abs(sentimentScore - 50) / 120)));
+  const direction = netBigOrderAmount > 0 ? "大单净买入" : netBigOrderAmount < 0 ? "大单净卖出" : "大单均衡";
+  return {
+    bigOrderBuyAmount,
+    bigOrderSellAmount,
+    netBigOrderAmount,
+    bigOrderDirection: direction,
+    expectedVolume,
+    expectedVolumeChangePercent: volume ? Number(((expectedVolume / volume - 1) * 100).toFixed(2)) : 0,
+    basis: "基于真实实时成交量、成交额、涨跌幅和新闻舆情分估算；不是虚构成交明细"
+  };
+}
+
 async function stockMeta(code: string) {
   const list = await fetchSina([stockPrefix(code)]);
   return (list[0] || { code, name: code, current: 0, changePercent: 0 }) as AnyRecord;
@@ -845,6 +1003,9 @@ async function sentimentBundle(code: string, stockName?: string) {
   const newsScore = averageScore(newsItems, 50);
   const announcementScore = averageScore(announcements, 50);
   const communityScore = averageScore(opinions.map((item) => ({ score: item.score, sentiment: item.type })), 50);
+  const sentimentScore = Math.round(newsScore * 0.45 + announcementScore * 0.2 + communityScore * 0.35);
+  const stock = await stockMeta(code);
+  const moneyFlow = moneyFlowFromQuote(stock, sentimentScore);
   return {
     newsItems,
     announcements,
@@ -852,7 +1013,8 @@ async function sentimentBundle(code: string, stockName?: string) {
     newsScore,
     announcementScore,
     communityScore,
-    sentimentScore: Math.round(newsScore * 0.45 + announcementScore * 0.2 + communityScore * 0.35)
+    sentimentScore,
+    moneyFlow
   };
 }
 
@@ -961,7 +1123,8 @@ async function analyze(code: string) {
   const signal = signalFor(stock);
   const techScore = signal.type === "BUY" ? 72 : signal.type === "SELL" ? 38 : 55;
   const bundle = await sentimentBundle(code, stock.name);
-  const score = Math.round(techScore * 0.45 + bundle.newsScore * 0.25 + bundle.communityScore * 0.2 + bundle.announcementScore * 0.1);
+  const flowScore = bundle.moneyFlow?.netBigOrderAmount > 0 ? 68 : bundle.moneyFlow?.netBigOrderAmount < 0 ? 38 : 50;
+  const score = Math.round(techScore * 0.36 + bundle.newsScore * 0.22 + bundle.communityScore * 0.16 + bundle.announcementScore * 0.1 + flowScore * 0.16);
   const finalSignal: Signal = score >= 65 ? "BUY" : score <= 42 ? "SELL" : "HOLD";
   const { candidates, selected } = strategySet(finalSignal, score, stock, bundle);
   const opinionConsensus = consensus(bundle.opinions);
@@ -974,7 +1137,7 @@ async function analyze(code: string) {
     techScore,
     sentimentScore: bundle.sentimentScore,
     targetPrice: current ? `${Number((current * 0.95).toFixed(2))}-${Number((current * 1.08).toFixed(2))}` : "以真实行情为准",
-    analysis: `综合研判采用真实行情、东方财富/新浪公开新闻、巨潮公告、东方财富股吧公开讨论。技术分${techScore}，新闻分${bundle.newsScore}，社区影响分${bundle.communityScore}，公告事件分${bundle.announcementScore}，综合分${score}。`,
+    analysis: `综合研判采用真实行情、东方财富/新浪公开新闻、巨潮公告、东方财富股吧公开讨论和大单资金流估算。技术分${techScore}，新闻分${bundle.newsScore}，社区影响分${bundle.communityScore}，公告事件分${bundle.announcementScore}，大单方向${bundle.moneyFlow.bigOrderDirection}，预期成交量${bundle.moneyFlow.expectedVolume}，综合分${score}。`,
     modelUsed: "公网量化舆情引擎",
     modelAvailable: true,
     quantDecision: {
@@ -992,8 +1155,10 @@ async function analyze(code: string) {
       { name: "技术面", score: techScore, direction: signal.type, weight: 45, reason: signal.message },
       { name: "新闻情绪", score: bundle.newsScore, direction: bundle.newsScore >= 58 ? "bullish" : bundle.newsScore <= 42 ? "bearish" : "neutral", weight: 25, reason: `东方财富/新浪新闻 ${bundle.newsItems.length} 条` },
       { name: "大V/社区影响力", score: bundle.communityScore, direction: opinionConsensus.consensus, weight: 20, reason: `东方财富股吧公开讨论 ${bundle.opinions.length} 条；雪球需要授权后接入` },
-      { name: "公告事件", score: bundle.announcementScore, direction: bundle.announcementScore >= 58 ? "bullish" : bundle.announcementScore <= 42 ? "bearish" : "neutral", weight: 10, reason: `巨潮公告 ${bundle.announcements.length} 条` }
+      { name: "公告事件", score: bundle.announcementScore, direction: bundle.announcementScore >= 58 ? "bullish" : bundle.announcementScore <= 42 ? "bearish" : "neutral", weight: 10, reason: `巨潮公告 ${bundle.announcements.length} 条` },
+      { name: "大单资金流", score: flowScore, direction: bundle.moneyFlow.netBigOrderAmount > 0 ? "bullish" : bundle.moneyFlow.netBigOrderAmount < 0 ? "bearish" : "neutral", weight: 16, reason: `${bundle.moneyFlow.bigOrderDirection}，大单买入${bundle.moneyFlow.bigOrderBuyAmount}，大单卖出${bundle.moneyFlow.bigOrderSellAmount}，预期成交量${bundle.moneyFlow.expectedVolume}` }
     ],
+    moneyFlow: bundle.moneyFlow,
     scenarios: [
       { name: "放量突破", probability: score >= 65 ? 45 : 25, trigger: "综合分持续高于65且新闻偏多", action: "轻仓跟随并设置止损" },
       { name: "消息转弱", probability: score <= 45 ? 45 : 25, trigger: "公告/社区出现连续负面关键词", action: "降低仓位或等待修复" },
@@ -1085,20 +1250,21 @@ async function route(req: Request) {
     if (!data.username || !data.password) return send(null, "请输入用户名和密码", 400);
     const user = await ensureUser(data.username, data.password);
     if (user.password !== data.password) return send(null, "密码错误", 401);
-    return send({ token: makeToken(user), userId: user.id, username: user.username, nickname: user.nickname, role: user.role, availableCash: user.availableCash, initialCapital: user.initialCapital });
+    return send({ token: makeToken(user), userId: user.id, username: user.username, nickname: user.nickname, role: user.role, email: user.email, availableCash: user.availableCash, initialCapital: user.initialCapital });
   }
 
   if (method === "POST" && path === "/auth/register") {
     const data = await jsonBody(req);
     if (!data.username || !data.password) return send(null, "请输入用户名和密码", 400);
     if (await userByName(data.username)) return send(null, "用户已存在", 409);
-    await ensureUser(data.username, data.password);
+    const user = await ensureUser(data.username, data.password);
+    if (data.email) await saveUser({ ...user, email: String(data.email).trim() });
     return send(null, "注册成功");
   }
 
   if (method === "GET" && path === "/auth/info") {
     const user = await blobStore().get(`user-id:${userIdFrom(req)}`, { type: "json" }) || await ensureUser();
-    return send({ id: user.id, username: user.username, nickname: user.nickname, role: user.role, availableCash: user.availableCash, initialCapital: user.initialCapital });
+    return send({ id: user.id, username: user.username, nickname: user.nickname, role: user.role, email: user.email, availableCash: user.availableCash, initialCapital: user.initialCapital });
   }
 
   if (method === "GET" && path === "/stock/sina/a-stocks") {
@@ -1195,6 +1361,17 @@ async function route(req: Request) {
   if (method === "GET" && path === "/ai/lab/iterations") {
     return send(await labIterations(userIdFrom(req)));
   }
+  if (method === "GET" && path === "/ai/lab/alert-settings") {
+    return send(await alertSettings(userIdFrom(req)));
+  }
+  if (method === "POST" && path === "/ai/lab/alert-settings") {
+    const data = await jsonBody(req);
+    const email = String(data.email || "").trim();
+    if (data.emailEnabled && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return send(null, "请先填写正确的邮箱", 400);
+    }
+    return send(await saveAlertSettings(userIdFrom(req), data), "邮箱告警设置已保存");
+  }
   if (method === "GET" && path === "/ai/sector/top-picks") {
     const cached = await blobStore().get("ai-sector-top-picks", { type: "json" });
     const age = cached?.analysisTime ? Date.now() - Date.parse(cached.analysisTime) : Number.POSITIVE_INFINITY;
@@ -1231,6 +1408,52 @@ async function route(req: Request) {
   if (aiConfigById && method === "PUT") return send(null, "配置已更新");
   if (aiConfigById && method === "DELETE") return send(null, "配置已删除");
   if (path.match(/^\/ai\/configs\/(\d+)\/test$/) && method === "POST") return send({ available: true }, "公网量化舆情引擎可用");
+
+  if (method === "GET" && path === "/broker/huabao/status") {
+    const userId = userIdFrom(req);
+    const guard = await realTradingGuard(userId);
+    return send({
+      ...(await brokerConfig(userId)),
+      ready: guard.allowed,
+      blockers: guard.missing,
+      modeText: guard.allowed ? "真实交易已具备联调条件" : "真实交易未启用",
+      warning: "真实交易会使用证券账户现金和持仓，必须完成华宝证券官方授权、测试环境联调和人工确认。"
+    });
+  }
+  if (method === "POST" && path === "/broker/huabao/config") {
+    const data = await jsonBody(req);
+    if (data.tradingEnabled && !data.officialDocsConfirmed) {
+      return send(null, "请先确认华宝证券官方开放接口文档和授权，不允许直接开启真实交易", 400);
+    }
+    return send(await saveBrokerConfig(userIdFrom(req), data), "华宝证券接入配置已保存");
+  }
+  if (method === "GET" && path === "/broker/huabao/real-trade-records") {
+    return send(await blobStore().get(`real-trade-attempts:${userIdFrom(req)}`, { type: "json" }) || []);
+  }
+  if (method === "POST" && (path === "/broker/huabao/buy" || path === "/broker/huabao/sell")) {
+    const userId = userIdFrom(req);
+    const data = await jsonBody(req);
+    const action = path.endsWith("/buy") ? "真实买入" : "真实卖出";
+    const guard = await realTradingGuard(userId);
+    if (!guard.allowed) {
+      const reason = `真实交易已拦截：${guard.missing.join("、")}`;
+      await recordRealTradeAttempt(userId, action, data, "已拦截", reason);
+      return send({ blockers: guard.missing }, reason, 423);
+    }
+    const reason = "华宝智投官方开放接口尚未接入签名和报文规则，系统仅保留真实交易入口，不发送真实委托。";
+    await recordRealTradeAttempt(userId, action, data, "待接入", reason);
+    return send({ blockers: [reason] }, reason, 501);
+  }
+  if (method === "POST" && path === "/broker/huabao/cash-transfer") {
+    const userId = userIdFrom(req);
+    const data = await jsonBody(req);
+    const guard = await realTradingGuard(userId);
+    const blockers = [...guard.missing];
+    if (!guard.config.cashTransferReady) blockers.push("银证转账接口未完成华宝证券授权");
+    const reason = `真实资金划转已拦截：${blockers.join("、")}`;
+    await recordRealTradeAttempt(userId, "真实资金划转", data, "已拦截", reason);
+    return send({ blockers }, reason, 423);
+  }
 
   if (method === "GET" && path === "/trade/account") return send(await account(userIdFrom(req)));
   if (method === "GET" && path === "/trade/positions") return send(await blobStore().get(`positions:${userIdFrom(req)}`, { type: "json" }) || []);

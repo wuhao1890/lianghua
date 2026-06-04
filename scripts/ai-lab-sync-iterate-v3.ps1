@@ -6,7 +6,11 @@
   [int]$MysqlPort = 3306,
   [string]$MysqlUser = "root",
   [string]$MysqlPassword = $env:LIANGHUA_MYSQL_PASSWORD,
-  [string]$MysqlDatabase = "stock_trading"
+  [string]$MysqlDatabase = "stock_trading",
+  [string]$SmtpHost = "smtp.qq.com",
+  [int]$SmtpPort = 587,
+  [string]$SmtpUser = $env:LIANGHUA_SMTP_USER,
+  [string]$SmtpAuthCode = $env:LIANGHUA_SMTP_AUTH_CODE
 )
 
 $ErrorActionPreference = "Stop"
@@ -149,6 +153,103 @@ function Get-SignalText([string]$Signal) {
   return "观望"
 }
 
+function Get-RankText([string]$Rank) {
+  if ($Rank -eq "king") { return "王者" }
+  if ($Rank -eq "gold") { return "黄金" }
+  if ($Rank -eq "platinum") { return "铂金" }
+  if ($Rank -eq "silver") { return "白银" }
+  return "青铜"
+}
+
+function Format-PercentText($Value) {
+  return ("{0:N2}%" -f [double](Get-Value $Value "value" $Value))
+}
+
+function Get-AlertSettings([object]$State) {
+  $settings = Get-Value $State "alertSettings" $null
+  if ($null -eq $settings) { return [pscustomobject]@{ email = ""; emailEnabled = $false; includeTopFive = $true } }
+  return [pscustomobject]@{
+    email = [string](Get-Value $settings "email" "")
+    emailEnabled = [bool](Get-Value $settings "emailEnabled" $false)
+    includeTopFive = [bool](Get-Value $settings "includeTopFive" $true)
+  }
+}
+
+function Format-TopFiveText([object]$State) {
+  $lines = @()
+  $topFive = @($State.experiments | Sort-Object -Property score, returnPct -Descending | Select-Object -First 5)
+  for ($i = 0; $i -lt $topFive.Count; $i++) {
+    $item = $topFive[$i]
+    $lines += ("{0}. {1}｜{2}｜{3}｜动作：{4}｜仓位：{5}%｜收益：{6:N2}%｜回撤：{7:N2}%｜综合分：{8}" -f
+      ($i + 1),
+      (Get-Value $item "assetName" ""),
+      (Get-Value $item "strategyName" ""),
+      (Get-RankText ([string](Get-Value $item "rank" ""))),
+      (Get-SignalText ([string](Get-Value $item "signal" ""))),
+      [double](Get-Value $item "position" 0),
+      [double](Get-Value $item "returnPct" 0),
+      [double](Get-Value $item "drawdownPct" 0),
+      [int](Get-Value $item "score" 0)
+    )
+  }
+  return ($lines -join "`r`n")
+}
+
+function Send-LabAlertEmail([string]$To, [string]$Subject, [string]$Body) {
+  if ([string]::IsNullOrWhiteSpace($To)) { return $false }
+  if ([string]::IsNullOrWhiteSpace($SmtpUser) -or [string]::IsNullOrWhiteSpace($SmtpAuthCode)) {
+    Write-Log "邮箱告警跳过：未配置发件邮箱环境变量"
+    return $false
+  }
+  try {
+    $message = New-Object System.Net.Mail.MailMessage
+    $message.From = New-Object System.Net.Mail.MailAddress($SmtpUser, "量化实验室")
+    $message.To.Add($To)
+    $message.Subject = $Subject
+    $message.Body = $Body
+    $message.BodyEncoding = [System.Text.Encoding]::UTF8
+    $message.SubjectEncoding = [System.Text.Encoding]::UTF8
+    $client = New-Object System.Net.Mail.SmtpClient($SmtpHost, $SmtpPort)
+    $client.EnableSsl = $true
+    $client.Credentials = New-Object System.Net.NetworkCredential($SmtpUser, $SmtpAuthCode)
+    $client.Send($message)
+    Write-Log "邮箱告警已发送：$To"
+    return $true
+  } catch {
+    Write-Log "邮箱告警失败：$($_.Exception.Message)"
+    return $false
+  }
+}
+
+function Send-KingTradeAlerts([object]$State, [array]$Alerts) {
+  if (!$Alerts -or $Alerts.Count -eq 0) { return }
+  $settings = Get-AlertSettings $State
+  if (!$settings.emailEnabled -or [string]::IsNullOrWhiteSpace($settings.email)) { return }
+  $topFiveText = if ($settings.includeTopFive) { Format-TopFiveText $State } else { "未开启前五名状态附带。" }
+  foreach ($alert in $Alerts) {
+    $actionText = Get-Value $alert "action" ""
+    $body = @"
+智能实验室王者策略触发交易动作
+
+触发动作：$actionText
+标的：$(Get-Value $alert "assetName" "")
+策略：$(Get-Value $alert "strategyName" "")
+段位：王者
+价格：$(Get-Value $alert "price" 0)
+仓位：$(Get-Value $alert "position" 0)%
+模拟金额：$(Get-Value $alert "amount" 0)
+本代：第 $(Get-Value $State "generation" 0) 代
+时间：$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
+
+前五名状态：
+$topFiveText
+
+说明：这是系统模拟交易和策略迭代告警，不构成投资建议。
+"@
+    Send-LabAlertEmail -To $settings.email -Subject "量化实验室王者策略$actionText提醒" -Body $body | Out-Null
+  }
+}
+
 function Ensure-MysqlSchema {
   Invoke-MysqlText @"
 CREATE TABLE IF NOT EXISTS ai_lab_state (
@@ -271,6 +372,7 @@ function Normalize-LabState([object]$State) {
       updatedAt = Get-Value $State "updatedAt" $null
       customStrategies = @()
       simulatedTrades = @()
+      alertSettings = Get-Value $State "alertSettings" $null
     })
   }
   if ($null -eq $State.assets) { $State | Add-Member -NotePropertyName assets -NotePropertyValue @() -Force }
@@ -278,6 +380,7 @@ function Normalize-LabState([object]$State) {
   if ($null -eq $State.evolutionLog) { $State | Add-Member -NotePropertyName evolutionLog -NotePropertyValue @() -Force }
   if ($null -eq $State.customStrategies) { $State | Add-Member -NotePropertyName customStrategies -NotePropertyValue @() -Force }
   if ($null -eq $State.simulatedTrades) { $State | Add-Member -NotePropertyName simulatedTrades -NotePropertyValue @() -Force }
+  if ($null -eq $State.alertSettings) { $State | Add-Member -NotePropertyName alertSettings -NotePropertyValue $null -Force }
   if ($champion -ne (Get-Value $State "champion" $null)) { $State.champion = $champion }
   return Convert-LabObjectText $State
 }
@@ -322,7 +425,7 @@ function New-LabAsset([string]$Type, [string]$Code, [string]$Name, [double]$Pric
 
 function Get-SeedAssets {
   $assets = @()
-  foreach ($code in @("600519", "300750", "000858", "600036", "300308", "600030")) {
+  foreach ($code in @("600519", "600036", "601318", "600276", "000858", "002594", "300033", "300059", "300274", "300308", "300750", "300760", "688008", "688036", "688111", "688223", "688599", "688981")) {
     try {
       $quote = Get-ApiData "/api/stock/realtime/$code"
       if ($quote -and [double](Get-Value $quote "current" 0) -gt 0) {
@@ -346,7 +449,7 @@ function Get-SeedAssets {
       }
     }
   } catch { Write-Log "seed fund list skipped: $($_.Exception.Message)" }
-  return @($assets | Sort-Object -Property aiScore -Descending | Select-Object -First 10)
+  return @($assets | Sort-Object -Property aiScore -Descending | Select-Object -First 24)
 }
 
 function New-Experiment([object]$Asset, [string]$StrategyName, [string]$Style, [int]$Index, [bool]$Custom, [int]$Generation) {
@@ -378,14 +481,33 @@ function New-Experiment([object]$Asset, [string]$StrategyName, [string]$Style, [
 }
 
 function Ensure-ExperimentPool([object]$State) {
-  $experiments = @($State.experiments)
-  if ($experiments -and $experiments.Count -gt 0) { return $State }
   $assets = @($State.assets)
-  if (!$assets -or $assets.Count -eq 0) { $assets = @(Get-SeedAssets); $State.assets = $assets }
+  $freshAssets = @(Get-SeedAssets)
+  if ($freshAssets -and $freshAssets.Count -gt 0) {
+    $assetMap = @{}
+    foreach ($asset in $assets) {
+      $id = [string](Get-Value $asset "id" "")
+      if ($id) { $assetMap[$id] = $asset }
+    }
+    foreach ($asset in $freshAssets) {
+      $id = [string](Get-Value $asset "id" "")
+      if ($id) { $assetMap[$id] = $asset }
+    }
+    $assets = @($assetMap.Values | Sort-Object -Property aiScore -Descending | Select-Object -First 24)
+    $State.assets = $assets
+  }
   if (!$assets -or $assets.Count -eq 0) { return $State }
   $generation = [int](Get-Value $State "generation" 0)
   $created = @()
+  $experiments = @($State.experiments)
+  $existingAssetIds = @{}
+  foreach ($experiment in $experiments) {
+    $assetId = [string](Get-Value $experiment "assetId" "")
+    if ($assetId) { $existingAssetIds[$assetId] = $true }
+  }
   foreach ($asset in $assets) {
+    $assetId = [string](Get-Value $asset "id" "")
+    if ($existingAssetIds.ContainsKey($assetId)) { continue }
     $created += New-Experiment $asset "智能趋势突破" "trend" 1 $false $generation
     $created += New-Experiment $asset "智能回撤低吸" "mean-reversion" 2 $false $generation
     $created += New-Experiment $asset "新闻舆情融合" "sentiment" 3 $false $generation
@@ -393,8 +515,12 @@ function Ensure-ExperimentPool([object]$State) {
       $created += New-Experiment $asset ([string](Get-Value $custom "name" "自定义策略")) ([string](Get-Value $custom "style" "custom")) 4 $true $generation
     }
   }
-  $State.experiments = @($created | Sort-Object -Property score, returnPct -Descending | Select-Object -First 40)
-  $State.evolutionLog = @([pscustomobject]@{ id = "$(Get-Date -UFormat %s)-seed"; title = "本地定时任务已建立策略池"; detail = "已从 $($assets.Count) 个真实行情资产生成 $($State.experiments.Count) 个策略实验。" }) + @($State.evolutionLog) | Select-Object -First 14
+  if ($created.Count -gt 0) {
+    $State.experiments = @(@($experiments) + @($created) | Sort-Object -Property score, returnPct -Descending | Select-Object -First 72)
+    $State.evolutionLog = @([pscustomobject]@{ id = "$(Get-Date -UFormat %s)-seed"; title = "本地定时任务已补充策略池"; detail = "已合并 $($assets.Count) 个真实行情资产，新增 $($created.Count) 个策略实验。" }) + @($State.evolutionLog) | Select-Object -First 14
+  } else {
+    $State.experiments = @($experiments | Sort-Object -Property score, returnPct -Descending | Select-Object -First 72)
+  }
   return $State
 }
 
@@ -417,6 +543,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
   $topIds = @{}
   foreach ($item in $topFive) { $topIds[[string](Get-Value $item "id" "")] = $true }
   $trades = @($State.simulatedTrades)
+  $alerts = @()
 
   foreach ($trade in $trades) {
     if ([string](Get-Value $trade "status" "") -ne "持仓中") { continue }
@@ -435,11 +562,22 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       $item = $experiment[0]
       $price = Get-AssetPriceFor $State $item
       if ($price -gt 0) {
+        $rank = [string](Get-Value $item "rank" (Get-Value $trade "rank" ""))
         $trade | Add-Member -NotePropertyName status -NotePropertyValue "已卖出" -Force
         $trade | Add-Member -NotePropertyName action -NotePropertyValue "卖出" -Force
         $trade | Add-Member -NotePropertyName sellPrice -NotePropertyValue $price -Force
         $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $now -Force
         $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round(($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0), 2)) -Force
+        if ($rank -eq "king") {
+          $alerts += [pscustomobject]@{
+            action = "卖出"
+            assetName = Get-Value $item "assetName" ""
+            strategyName = Get-Value $item "strategyName" ""
+            price = $price
+            position = Get-Value $item "position" 0
+            amount = Get-Value $trade "amount" 0
+          }
+        }
       }
     }
   }
@@ -471,11 +609,23 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       amount = $amount
       quantity = $quantity
       profit = 0
+      rank = Get-Value $item "rank" ""
       createdAt = $now
     }) + $trades
+    if ([string](Get-Value $item "rank" "") -eq "king") {
+      $alerts += [pscustomobject]@{
+        action = "买入"
+        assetName = Get-Value $item "assetName" ""
+        strategyName = Get-Value $item "strategyName" ""
+        price = $price
+        position = $position
+        amount = $amount
+      }
+    }
   }
 
   $State.simulatedTrades = @($trades | Select-Object -First 40)
+  Send-KingTradeAlerts $State $alerts
   return $State
 }
 

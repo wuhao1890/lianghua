@@ -20,6 +20,7 @@ export const useUserStore = defineStore('user', () => {
       username: loginData.username,
       nickname: loginData.nickname,
       role: loginData.role,
+      email: loginData.email,
       availableCash: loginData.availableCash,
       initialCapital: loginData.initialCapital
     }

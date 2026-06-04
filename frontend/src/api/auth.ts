@@ -12,3 +12,22 @@ export function register(data: RegisterRequest) {
 export function getUserInfo() {
   return request.get<ApiResponse<User>>('/auth/info')
 }
+
+export function getAlertSettings() {
+  return request.get<ApiResponse<{
+    email: string
+    emailEnabled: boolean
+    kingTradeOnly: boolean
+    includeTopFive: boolean
+    updatedAt?: string
+  }>>('/ai/lab/alert-settings')
+}
+
+export function saveAlertSettings(data: {
+  email: string
+  emailEnabled: boolean
+  kingTradeOnly: boolean
+  includeTopFive: boolean
+}) {
+  return request.post<ApiResponse<any>>('/ai/lab/alert-settings', data)
+}

@@ -7,8 +7,42 @@
           <template #header>
             <div class="card-header">
               <h3>股票交易</h3>
+              <el-tag :type="tradeMode === 'real' ? 'danger' : 'info'" effect="plain">
+                {{ tradeMode === 'real' ? '华宝真实交易' : '模拟交易' }}
+              </el-tag>
             </div>
           </template>
+
+          <div class="mode-section">
+            <el-segmented
+              v-model="tradeMode"
+              :options="[
+                { label: '模拟交易', value: 'mock' },
+                { label: '华宝真实交易', value: 'real' }
+              ]"
+            />
+            <el-alert
+              v-if="tradeMode === 'mock'"
+              title="当前使用系统模拟资金，不会动用证券账户现金。"
+              type="info"
+              :closable="false"
+              show-icon
+            />
+            <el-alert
+              v-else
+              :title="brokerStatus?.ready ? '华宝真实交易已进入待下单检查状态' : '华宝真实交易未启用，系统会拦截真实委托。'"
+              type="warning"
+              :closable="false"
+              show-icon
+            >
+              <template #default>
+                <div class="broker-warning">
+                  <div>{{ brokerStatus?.warning || '真实交易必须完成券商官方授权和测试环境联调。' }}</div>
+                  <div v-if="brokerStatus?.blockers?.length">阻断项：{{ brokerStatus.blockers.join('、') }}</div>
+                </div>
+              </template>
+            </el-alert>
+          </div>
 
           <!-- 搜索股票 -->
           <div class="search-section">
@@ -67,6 +101,7 @@
             :available-cash="accountOverview?.availableCash || 0"
             :available-quantity="availableQuantity"
             :submitting="panelSubmitting"
+            :real-mode="tradeMode === 'real'"
             @submit="handleSubmit"
           />
           <el-empty v-else description="请先搜索并选择股票" />
@@ -146,9 +181,10 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useStockStore } from '@/store/stock'
 import { useTradeStore } from '@/store/trade'
+import { getHuabaoStatus, huabaoRealBuy, huabaoRealSell } from '@/api/trade'
 import { formatPrice, formatPercent, formatMoney, getColor, getColorClass } from '@/utils/format'
 import TradePanel from '@/components/TradePanel.vue'
-import type { StockInfo } from '@/types'
+import type { HuabaoBrokerStatus, StockInfo } from '@/types'
 
 const route = useRoute()
 const stockStore = useStockStore()
@@ -157,6 +193,8 @@ const tradeStore = useTradeStore()
 const searchKeyword = ref('')
 const direction = ref<'BUY' | 'SELL'>((route.query.direction as 'BUY' | 'SELL') || 'BUY')
 const selectedStock = ref<StockInfo | null>(null)
+const tradeMode = ref<'mock' | 'real'>('mock')
+const brokerStatus = ref<HuabaoBrokerStatus | null>(null)
 
 const accountOverview = computed(() => tradeStore.accountOverview)
 
@@ -191,6 +229,25 @@ async function handleSubmit(data: { price: number; quantity: number }) {
   if (!selectedStock.value) return
   panelSubmitting.value = true
   try {
+    if (tradeMode.value === 'real') {
+      const payload = {
+        stockCode: selectedStock.value.code,
+        stockName: selectedStock.value.name,
+        market: selectedStock.value.market === 'A' ? 'A_STOCK' : 'NASDAQ',
+        direction: direction.value,
+        orderType: 'LIMIT' as const,
+        price: data.price,
+        quantity: data.quantity
+      }
+      if (direction.value === 'BUY') {
+        await huabaoRealBuy({ ...payload, direction: 'BUY' })
+      } else {
+        await huabaoRealSell({ ...payload, direction: 'SELL' })
+      }
+      ElMessage.success('真实委托已提交华宝证券')
+      return
+    }
+
     if (direction.value === 'BUY') {
       await tradeStore.buy({
         stockCode: selectedStock.value.code,
@@ -229,7 +286,8 @@ onMounted(async () => {
   try {
     await Promise.all([
       tradeStore.getAccountOverview(),
-      tradeStore.getPositions()
+      tradeStore.getPositions(),
+      fetchBrokerStatus()
     ])
 
     // 如果URL带了code参数，自动搜索
@@ -243,6 +301,15 @@ onMounted(async () => {
     console.error('加载交易数据失败:', e)
   }
 })
+
+async function fetchBrokerStatus() {
+  try {
+    const res = await getHuabaoStatus()
+    brokerStatus.value = res.data.data
+  } catch {
+    brokerStatus.value = null
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -270,6 +337,18 @@ onMounted(async () => {
 .search-section {
   position: relative;
   margin-bottom: 20px;
+}
+
+.mode-section {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.broker-warning {
+  display: grid;
+  gap: 4px;
+  line-height: 1.6;
 }
 
 .search-results {

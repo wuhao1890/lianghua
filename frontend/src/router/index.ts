@@ -125,6 +125,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '充值中心', icon: 'CreditCard' }
       },
       {
+        path: 'alert-settings',
+        name: 'AlertSettings',
+        component: () => import('@/views/AlertSettings.vue'),
+        meta: { title: '邮箱告警', icon: 'Message' }
+      },
+      {
         path: 'ai-agent',
         name: 'AiAgent',
         component: () => import('@/views/AiAgent.vue'),

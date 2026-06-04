@@ -227,6 +227,28 @@
             <span>目标区间</span>
             <strong>{{ aiResult.quantDecision?.targetRange || aiResult.targetPrice || '-' }}</strong>
           </div>
+          <div v-if="aiResult.moneyFlow" class="metric-item">
+            <span>大单买入</span>
+            <strong>{{ formatNumber(aiResult.moneyFlow.bigOrderBuyAmount) }}</strong>
+          </div>
+          <div v-if="aiResult.moneyFlow" class="metric-item">
+            <span>大单卖出</span>
+            <strong>{{ formatNumber(aiResult.moneyFlow.bigOrderSellAmount) }}</strong>
+          </div>
+          <div v-if="aiResult.moneyFlow" class="metric-item">
+            <span>大单净流向</span>
+            <strong :class="aiResult.moneyFlow.netBigOrderAmount >= 0 ? 'price-up' : 'price-down'">
+              {{ aiResult.moneyFlow.bigOrderDirection }} {{ formatNumber(Math.abs(aiResult.moneyFlow.netBigOrderAmount)) }}
+            </strong>
+          </div>
+          <div v-if="aiResult.moneyFlow" class="metric-item">
+            <span>预期成交量</span>
+            <strong>{{ formatNumber(aiResult.moneyFlow.expectedVolume) }}</strong>
+          </div>
+          <div v-if="aiResult.moneyFlow" class="metric-item wide">
+            <span>资金流依据</span>
+            <strong>{{ aiResult.moneyFlow.basis }}</strong>
+          </div>
         </div>
 
         <section v-if="aiResult.selectedStrategy" class="panel strategy-lab-panel">

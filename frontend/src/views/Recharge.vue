@@ -3,12 +3,84 @@
     <!-- 账户余额 -->
     <el-card class="balance-card" shadow="hover">
       <div class="balance-info">
-        <div class="balance-label">可用余额</div>
+        <div class="balance-label">模拟账户可用余额</div>
         <div class="balance-amount">
           <span class="currency">¥</span>
           {{ formatMoney(userStore.userInfo?.availableCash || 0) }}
         </div>
       </div>
+    </el-card>
+
+    <el-card class="real-broker-card" shadow="hover">
+      <template #header>
+        <div class="card-header broker-header">
+          <span>华宝证券真实资金</span>
+          <el-tag :type="brokerStatus?.ready ? 'success' : 'warning'" effect="plain">
+            {{ brokerStatus?.ready ? '已具备联调条件' : '未启用' }}
+          </el-tag>
+        </div>
+      </template>
+      <el-alert
+        title="真钱充值不是系统内充值，应走华宝证券银证转账。未完成华宝官方 OpenAPI 授权前，系统不会发起真实资金划转。"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px;"
+      />
+      <el-row :gutter="16">
+        <el-col :xs="24" :lg="14">
+          <el-form :model="brokerForm" label-width="120px" class="broker-form">
+            <el-form-item label="接口地址">
+              <el-input v-model="brokerForm.apiBase" placeholder="华宝证券提供的正式或测试接口地址" />
+            </el-form-item>
+            <el-form-item label="客户编号">
+              <el-input v-model="brokerForm.clientId" :placeholder="brokerStatus?.clientIdMasked || '华宝证券分配的客户编号'" />
+            </el-form-item>
+            <el-form-item label="证券账户">
+              <el-input v-model="brokerForm.accountId" :placeholder="brokerStatus?.accountIdMasked || '华宝证券账户号'" />
+            </el-form-item>
+            <el-form-item label="接入确认">
+              <div class="confirm-list">
+                <el-checkbox v-model="brokerForm.officialDocsConfirmed">已拿到华宝证券官方开放接口文档和授权</el-checkbox>
+                <el-checkbox v-model="brokerForm.sandboxReady">测试环境已完成查询、撤单、下单全流程联调</el-checkbox>
+                <el-checkbox v-model="brokerForm.cashTransferReady">银证转账接口已完成授权</el-checkbox>
+                <el-checkbox v-model="brokerForm.tradingEnabled">我确认开启真实交易闸门</el-checkbox>
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="savingBroker" @click="saveBroker">保存华宝接入配置</el-button>
+            </el-form-item>
+          </el-form>
+        </el-col>
+        <el-col :xs="24" :lg="10">
+          <div class="real-transfer-box">
+            <div class="transfer-title">真实资金划转</div>
+            <el-radio-group v-model="realTransfer.direction">
+              <el-radio-button value="转入证券账户">转入证券账户</el-radio-button>
+              <el-radio-button value="转出银行卡">转出银行卡</el-radio-button>
+            </el-radio-group>
+            <el-input-number
+              v-model="realTransfer.amount"
+              :min="1"
+              :precision="2"
+              :step="1000"
+              style="width: 100%; margin-top: 12px;"
+            />
+            <el-button
+              type="danger"
+              size="large"
+              class="submit-btn"
+              :loading="transferring"
+              @click="submitRealTransfer"
+            >
+              发起华宝真实资金划转
+            </el-button>
+            <div class="blocker-list" v-if="brokerStatus?.blockers?.length">
+              <div v-for="item in brokerStatus.blockers" :key="item">阻断：{{ item }}</div>
+            </div>
+          </div>
+        </el-col>
+      </el-row>
     </el-card>
 
     <el-row :gutter="20">
@@ -17,7 +89,7 @@
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>账户充值</span>
+              <span>模拟账户充值</span>
             </div>
           </template>
 
@@ -177,7 +249,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import { applyRecharge, getRechargeRecords } from '@/api/recharge'
-import type { RechargeOrder } from '@/types'
+import { getHuabaoStatus, huabaoCashTransfer, saveHuabaoConfig } from '@/api/trade'
+import type { HuabaoBrokerStatus, RechargeOrder } from '@/types'
 
 const userStore = useUserStore()
 const formRef = ref<FormInstance>()
@@ -187,6 +260,22 @@ const records = ref<RechargeOrder[]>([])
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
+const brokerStatus = ref<HuabaoBrokerStatus | null>(null)
+const savingBroker = ref(false)
+const transferring = ref(false)
+const brokerForm = reactive({
+  apiBase: '',
+  clientId: '',
+  accountId: '',
+  officialDocsConfirmed: false,
+  sandboxReady: false,
+  cashTransferReady: false,
+  tradingEnabled: false
+})
+const realTransfer = reactive({
+  amount: 0,
+  direction: '转入证券账户' as '转入证券账户' | '转出银行卡'
+})
 
 const presetAmounts = [100, 500, 1000, 5000]
 
@@ -291,8 +380,51 @@ async function fetchRecords() {
   }
 }
 
+async function fetchBrokerStatus() {
+  try {
+    const res = await getHuabaoStatus()
+    brokerStatus.value = res.data.data
+    brokerForm.apiBase = brokerStatus.value.apiBase || ''
+    brokerForm.officialDocsConfirmed = Boolean(brokerStatus.value.officialDocsConfirmed)
+    brokerForm.sandboxReady = Boolean(brokerStatus.value.sandboxReady)
+    brokerForm.cashTransferReady = Boolean(brokerStatus.value.cashTransferReady)
+    brokerForm.tradingEnabled = Boolean(brokerStatus.value.tradingEnabled)
+  } catch {
+    brokerStatus.value = null
+  }
+}
+
+async function saveBroker() {
+  savingBroker.value = true
+  try {
+    const res = await saveHuabaoConfig(brokerForm)
+    brokerStatus.value = res.data.data
+    brokerForm.clientId = ''
+    brokerForm.accountId = ''
+    ElMessage.success('华宝接入配置已保存')
+  } finally {
+    savingBroker.value = false
+  }
+}
+
+async function submitRealTransfer() {
+  if (realTransfer.amount <= 0) {
+    ElMessage.warning('请输入真实划转金额')
+    return
+  }
+  transferring.value = true
+  try {
+    await huabaoCashTransfer({ ...realTransfer })
+    ElMessage.success('真实资金划转已提交')
+  } finally {
+    transferring.value = false
+    fetchBrokerStatus()
+  }
+}
+
 onMounted(() => {
   fetchRecords()
+  fetchBrokerStatus()
 })
 </script>
 
@@ -326,6 +458,47 @@ onMounted(() => {
       margin-right: 4px;
     }
   }
+}
+
+.real-broker-card {
+  margin-bottom: 20px;
+  border-radius: 8px;
+}
+
+.broker-header {
+  justify-content: space-between;
+}
+
+.broker-form {
+  max-width: 720px;
+}
+
+.confirm-list {
+  display: grid;
+  gap: 8px;
+}
+
+.real-transfer-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: #fff8f0;
+  border: 1px solid #f3d19e;
+  border-radius: 8px;
+}
+
+.transfer-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.blocker-list {
+  display: grid;
+  gap: 6px;
+  color: #b88230;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .card-header {
