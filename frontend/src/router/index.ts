@@ -53,6 +53,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'A股行情', icon: 'DataLine' }
       },
       {
+        path: 'chinext-stocks',
+        name: 'ChinextStocks',
+        component: () => import('@/views/AStocks.vue'),
+        meta: { title: '创业板', icon: 'DataLine' }
+      },
+      {
+        path: 'star-stocks',
+        name: 'StarStocks',
+        component: () => import('@/views/AStocks.vue'),
+        meta: { title: '科创板', icon: 'DataLine' }
+      },
+      {
         path: 'us-stocks',
         name: 'UsStocks',
         component: () => import('@/views/UsStocks.vue'),

@@ -3,7 +3,7 @@
     <section class="lab-header">
       <div>
         <h2>智能自动投资实验室</h2>
-        <p>自动选股票、黄金、基金，运行策略买卖模拟，并按收益持续进化。</p>
+        <p>{{ labPageIntro }}</p>
       </div>
       <div class="header-actions">
         <el-checkbox-group v-model="enabledAssets">
@@ -54,6 +54,13 @@
       <el-button :type="labView === 'portfolio' ? 'primary' : ''" @click="router.push('/ai-lab/portfolio')">组合方案</el-button>
     </section>
 
+    <section v-if="showOverview" class="lab-entry-grid">
+      <article v-for="entry in labEntries" :key="entry.path" class="lab-entry" @click="router.push(entry.path)">
+        <strong>{{ entry.title }}</strong>
+        <span>{{ entry.desc }}</span>
+      </article>
+    </section>
+
     <section v-if="showOverview || showGrowth" class="decision-grid">
       <article class="panel mood-panel">
         <div class="panel-head">
@@ -94,7 +101,7 @@
           <h3>研究控制台</h3>
           <span>指定标的或调整学习方向，避免无脑迭代。</span>
         </div>
-        <el-button type="primary" plain @click="applyResearchFocus">应用研究方向</el-button>
+        <el-button type="primary" plain @click="applyResearchFocus">加入研究任务</el-button>
       </div>
       <div class="research-form">
         <el-input v-model="researchForm.target" placeholder="指定股票/基金/金属代码或名称，如 600519、贵州茅台、110022" />
@@ -105,6 +112,20 @@
           placeholder="告诉模型重点研究什么：长期持有、短线波段、新闻催化、资金流、黑名单观察、某个指标等。"
         />
       </div>
+      <div v-if="researchFocuses.length" class="research-task-list">
+        <article v-for="item in researchFocuses" :key="researchFocusKey(item)" class="research-task">
+          <div class="research-task-body" @click="goResearchFocus(item)">
+            <strong>{{ item.target || '全局研究' }}</strong>
+            <span>{{ item.direction || '持续研究该标的的历史规律、新闻舆情、资金流和技术面' }}</span>
+            <small>加入时间 {{ formatTime(item.updatedAt) }}</small>
+          </div>
+          <div class="research-task-actions">
+            <el-button text type="primary" @click="goResearchFocus(item)">查看</el-button>
+            <el-button text type="danger" @click="removeResearchFocus(item)">移除</el-button>
+          </div>
+        </article>
+      </div>
+      <el-empty v-else description="还没有研究任务，添加多少个就会同时研究多少个" :image-size="72" />
       <div class="blacklist" v-if="blacklistItems.length">
         <strong>风险黑名单</strong>
         <span v-for="item in blacklistItems" :key="item.code">{{ item.name }}：{{ item.reason }}</span>
@@ -588,6 +609,7 @@ interface CustomStrategy {
 }
 
 interface ResearchFocus {
+  id?: string
   target: string
   direction: string
   updatedAt?: string
@@ -615,7 +637,7 @@ const iterationHistory = ref<any[]>([])
 const simulatedTrades = ref<SimulatedTrade[]>([])
 const customStrategies = ref<CustomStrategy[]>([])
 const portfolioPlan = ref<PortfolioPlan | null>(null)
-const researchFocus = ref<ResearchFocus | null>(null)
+const researchFocuses = ref<ResearchFocus[]>([])
 const blacklistItems = ref<BlacklistItem[]>([])
 const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
 
@@ -654,6 +676,17 @@ const showOverview = computed(() => labView.value === 'overview')
 const showGrowth = computed(() => labView.value === 'growth')
 const showResearch = computed(() => labView.value === 'research')
 const showPortfolio = computed(() => labView.value === 'portfolio')
+const labPageIntro = computed(() => {
+  if (showGrowth.value) return '查看模型学到了什么、情绪如何变化、哪些标的被拉黑或继续观察。'
+  if (showResearch.value) return '添加多个股票、基金、金属研究任务，添加多少个就会同时研究多少个。'
+  if (showPortfolio.value) return '查看当前资金怎么分配、前五组合、持仓周期、买入卖出依据。'
+  return '自动选股票、黄金、基金，运行策略买卖模拟，并按收益持续进化。'
+})
+const labEntries = [
+  { title: '成长记录', desc: '模型学到了什么、情绪和黑名单', path: '/ai-lab/growth' },
+  { title: '研究控制', desc: '多标的研究任务和自定义方向', path: '/ai-lab/research' },
+  { title: '组合方案', desc: '资金比例、前五组合和交易依据', path: '/ai-lab/portfolio' }
+]
 const activePortfolioPlan = computed(() => portfolioPlan.value?.buckets?.length ? portfolioPlan.value : buildPortfolioPlan())
 const bestReturn = computed(() => champion.value?.returnPct || 0)
 const moodInfo = computed(() => {
@@ -674,7 +707,7 @@ const currentDecision = computed(() => {
     title: buys.length ? `当前优先方案：${buys.map((item) => `${item.bucketName}买入${item.assetName}`).slice(0, 3).join('，')}` : '当前没有新的买入动作，保持观察',
     detail: `${moodInfo.value.reason} 现在持仓 ${openCount} 个，交易周期未到前不频繁卖出；新方案只有在旧方案持续亏损、分组超额或分数差距明显时才替换。`,
     points: [
-      `研究方向：${researchFocus.value?.target || '全市场组合筛选'} ${researchFocus.value?.direction || '收益优先，同时记录风险教训'}`,
+      `研究任务：${researchFocusSummary()}`,
       `交易成本：每次买卖按5元成本意识处理，避免5分钟内无意义换手`,
       holds.length ? `观察候选：${holds.slice(0, 2).map((item) => item.assetName).join('、')}` : '候选均已达到买入条件'
     ]
@@ -688,8 +721,11 @@ const learningInsights = computed(() => {
     { title: '交易节奏', detail: '短线、事件、趋势、自定义策略都有最小持有周期；定时迭代只学习，不再每代发交易邮件。' },
     { title: '当前情绪', detail: `${moodInfo.value.name}：${moodInfo.value.reason}` }
   ]
-  if (researchFocus.value?.target) insights.unshift({ title: '指定研究', detail: `正在优先研究 ${researchFocus.value.target}：${researchFocus.value.direction || '等待补充方向'}` })
-  return [...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 6)
+  const focusInsights = researchFocuses.value.slice(0, 4).map((item) => ({
+    title: `指定研究：${item.target || '全局方向'}`,
+    detail: item.direction || '等待补充方向，先按历史规律、新闻舆情、资金流和技术面持续研究。'
+  }))
+  return [...focusInsights, ...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 8)
 })
 const targetArchives = computed(() => sortedAssets.value.slice(0, 12).map((asset) => {
   const related = sortedExperiments.value.filter((item) => item.assetCode === asset.code)
@@ -804,10 +840,11 @@ function applyLabState(state: any) {
   evolutionLog.value = Array.isArray(state.evolutionLog) ? state.evolutionLog : []
   simulatedTrades.value = Array.isArray(state.simulatedTrades) ? state.simulatedTrades : []
   portfolioPlan.value = normalizePortfolioPlan(state.portfolioPlan)
-  researchFocus.value = state.researchFocus || null
+  researchFocuses.value = normalizeResearchFocuses(state)
   blacklistItems.value = Array.isArray(state.blacklistItems) ? state.blacklistItems : []
-  researchForm.target = researchFocus.value?.target || ''
-  researchForm.direction = researchFocus.value?.direction || ''
+  researchForm.target = ''
+  researchForm.direction = ''
+  applyAllResearchFocuses()
   if (Array.isArray(state.customStrategies)) {
     customStrategies.value = state.customStrategies
     saveCustomStrategies()
@@ -871,6 +908,53 @@ function normalizePortfolioPlan(plan: any): PortfolioPlan | null {
   }
 }
 
+function normalizeResearchFocuses(state: any): ResearchFocus[] {
+  const list = Array.isArray(state?.researchFocuses)
+    ? state.researchFocuses
+    : state?.researchFocus
+      ? [state.researchFocus]
+      : []
+  return list
+    .map((item: any, index: number) => ({
+      id: String(item?.id || `focus-${item?.updatedAt || Date.now()}-${index}`),
+      target: String(item?.target || '').trim(),
+      direction: String(item?.direction || '').trim(),
+      updatedAt: String(item?.updatedAt || new Date().toISOString())
+    }))
+    .filter((item) => item.target || item.direction)
+}
+
+function researchFocusKey(item: ResearchFocus) {
+  return item.id || `${item.target}-${item.updatedAt}`
+}
+
+function researchFocusSummary() {
+  if (!researchFocuses.value.length) return '全市场组合筛选 收益优先，同时记录风险教训'
+  return researchFocuses.value
+    .slice(0, 5)
+    .map((item) => `${item.target || '全局'}：${item.direction || '持续研究'}`)
+    .join('；')
+}
+
+function focusMatchesExperiment(focus: ResearchFocus, item: Pick<LabExperiment, 'assetCode' | 'assetName'>) {
+  const target = focus.target.trim()
+  if (!target) return true
+  return item.assetCode.includes(target) || item.assetName.includes(target)
+}
+
+function applyFocusToExperiments(focus: ResearchFocus) {
+  const direction = focus.direction || '继续深化该标的的历史规律、新闻舆情、资金流和技术面'
+  for (const item of experiments.value) {
+    if (!focusMatchesExperiment(focus, item)) continue
+    item.mutation = `用户指定研究任务：${focus.target || '全局方向'}。重点：${direction}。`
+    item.factorScores = factorScoresFor(item)
+  }
+}
+
+function applyAllResearchFocuses() {
+  for (const focus of researchFocuses.value) applyFocusToExperiments(focus)
+}
+
 async function persistLabState() {
   const payload = {
     generation: generation.value,
@@ -883,7 +967,8 @@ async function persistLabState() {
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
     portfolioPlan: activePortfolioPlan.value,
-    researchFocus: researchFocus.value,
+    researchFocuses: researchFocuses.value,
+    researchFocus: researchFocuses.value[0] || null,
     blacklistItems: blacklistItems.value,
     champion: champion.value,
     lastRunAt: new Date().toISOString()
@@ -904,7 +989,8 @@ async function persistIteration() {
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
     portfolioPlan: activePortfolioPlan.value,
-    researchFocus: researchFocus.value,
+    researchFocuses: researchFocuses.value,
+    researchFocus: researchFocuses.value[0] || null,
     blacklistItems: blacklistItems.value,
     champion: champion.value
   }
@@ -1232,6 +1318,7 @@ function evolveOnce(shouldPersist = true) {
       factorScores: factorScoresFor({ ...item, score: nextScore, returnPct: nextReturn, drawdownPct: nextDrawdown, signal: nextSignal })
     }
   })
+  applyAllResearchFocuses()
   executeSimulatedTrades(previous)
 
   const next = champion.value
@@ -1502,21 +1589,45 @@ async function applyResearchFocus() {
     ElMessage.warning('请填写要研究的标的或学习方向')
     return
   }
-  researchFocus.value = {
+  const existingIndex = target
+    ? researchFocuses.value.findIndex((item) => item.target === target)
+    : -1
+  const existing = existingIndex >= 0 ? researchFocuses.value[existingIndex] : null
+  const focus: ResearchFocus = {
+    id: existing?.id || `focus-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     target,
     direction,
     updatedAt: new Date().toISOString()
   }
-  if (target) {
-    for (const item of experiments.value) {
-      const matched = item.assetCode.includes(target) || item.assetName.includes(target)
-      if (!matched) continue
-      item.mutation = `用户指定重点研究：${direction || '继续深挖该标的的历史规律、新闻舆情、资金流和技术面'}。`
-      item.factorScores = factorScoresFor(item)
-    }
-  }
+  if (existingIndex >= 0) researchFocuses.value.splice(existingIndex, 1, focus)
+  else researchFocuses.value.unshift(focus)
+  applyFocusToExperiments(focus)
+  researchForm.target = ''
+  researchForm.direction = ''
   await persistLabState()
-  ElMessage.success('研究方向已保存，会参与后续每次迭代')
+  ElMessage.success(existing ? '研究任务已更新，会继续参与后续迭代' : '研究任务已加入，会参与后续每次迭代')
+}
+
+async function removeResearchFocus(focus: ResearchFocus) {
+  researchFocuses.value = researchFocuses.value.filter((item) => researchFocusKey(item) !== researchFocusKey(focus))
+  await persistLabState()
+  ElMessage.success('研究任务已移除')
+}
+
+function goResearchFocus(focus: ResearchFocus) {
+  const target = focus.target.trim()
+  if (!target) {
+    router.push('/ai-lab/research')
+    return
+  }
+  const asset = assets.value.find((item) => item.code.includes(target) || item.name.includes(target))
+  const experiment = experiments.value.find((item) => item.assetCode.includes(target) || item.assetName.includes(target))
+  const code = asset?.code || experiment?.assetCode || target
+  const type = asset?.type || experiment?.assetType
+  if (type === 'gold') router.push(`/gold?code=${encodeURIComponent(code)}`)
+  else if (type === 'fund') router.push(`/fund?code=${encodeURIComponent(code)}`)
+  else if (/^\d{6}$/.test(code)) router.push(`/stock/${code}`)
+  else router.push('/ai-lab/research')
 }
 
 function refreshBlacklist() {
@@ -1958,6 +2069,7 @@ function styleText(style?: string) {
 .lab-header,
 .panel,
 .rank-track,
+.lab-entry,
 .kpi {
   border: 1px solid #e4e7ed;
   border-radius: 8px;
@@ -1998,6 +2110,39 @@ function styleText(style?: string) {
   border: 1px solid #e4e7ed;
   border-radius: 8px;
   background: #fff;
+}
+
+.lab-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lab-entry {
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  strong {
+    margin-bottom: 6px;
+    color: #1f2d3d;
+  }
+
+  span {
+    color: #606266;
+    line-height: 1.55;
+  }
+
+  &:hover {
+    border-color: #409eff;
+    box-shadow: 0 8px 20px rgba(31, 45, 61, 0.08);
+    transform: translateY(-1px);
+  }
 }
 
 .control-label {
@@ -2595,6 +2740,7 @@ function styleText(style?: string) {
 
 .decision-points,
 .learning-list,
+.research-task-list,
 .blacklist {
   display: grid;
   gap: 8px;
@@ -2624,6 +2770,42 @@ function styleText(style?: string) {
 .research-form {
   display: grid;
   gap: 10px;
+}
+
+.research-task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  background: #f9fbfd;
+}
+
+.research-task-body {
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+
+  strong {
+    color: #1f2d3d;
+  }
+
+  span {
+    color: #4b5563;
+    line-height: 1.55;
+  }
+
+  small {
+    color: #909399;
+  }
+}
+
+.research-task-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .blacklist strong {
@@ -2703,6 +2885,7 @@ function styleText(style?: string) {
   .bottom-grid,
   .portfolio-grid,
   .decision-grid,
+  .lab-entry-grid,
   .kpi-grid {
     grid-template-columns: 1fr;
   }
@@ -2722,6 +2905,14 @@ function styleText(style?: string) {
   .score-row,
   .mini-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .research-task {
+    grid-template-columns: 1fr;
+  }
+
+  .research-task-actions {
+    justify-content: flex-start;
   }
 
   .trade-plan .wide {

@@ -25,6 +25,16 @@
       </template>
 
       <div class="board-tabs">
+        <div class="board-shortcuts">
+          <button type="button" :class="{ active: selectedBoard === 'chinext' }" @click="goBoard('chinext')">
+            <strong>创业板</strong>
+            <span>300 开头成长股</span>
+          </button>
+          <button type="button" :class="{ active: selectedBoard === 'star' }" @click="goBoard('star')">
+            <strong>科创板</strong>
+            <span>688 开头硬科技</span>
+          </button>
+        </div>
         <el-radio-group v-model="selectedBoard" size="small" @change="onBoardChange">
           <el-radio-button value="">全部A股</el-radio-button>
           <el-radio-button value="main">沪深主板</el-radio-button>
@@ -123,15 +133,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Refresh, TrendCharts, SortDown, SortUp } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getSinaAStocks } from '@/api/stock'
+import { getSinaAStocks, searchStocks as searchStocksApi } from '@/api/stock'
 import { formatPrice, formatPercent, formatNumber, getColor } from '@/utils/format'
 import type { StockInfo } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(false)
 const stockList = ref<StockInfo[]>([])
@@ -164,42 +175,85 @@ function boardName(code: string) {
   return '主板'
 }
 
+function boardFromRoute() {
+  if (route.query.board === 'main') return 'main'
+  if (route.path.includes('chinext')) return 'chinext'
+  if (route.path.includes('star')) return 'star'
+  return ''
+}
+
+function boardPath(board: string) {
+  if (board === 'chinext') return '/chinext-stocks'
+  if (board === 'star') return '/star-stocks'
+  if (board === 'main') return '/a-stocks?board=main'
+  return '/a-stocks'
+}
+
+function goBoard(board: string) {
+  selectedBoard.value = board
+  router.push(boardPath(board))
+}
+
+function matchesBoard(code: string) {
+  if (selectedBoard.value === 'chinext') return String(code).startsWith('300')
+  if (selectedBoard.value === 'star') return String(code).startsWith('688')
+  if (selectedBoard.value === 'main') return String(code).startsWith('6') || String(code).startsWith('0')
+  return true
+}
+
+function mapStock(s: any): StockInfo {
+  return {
+    code: s.code,
+    name: s.name,
+    market: 'A',
+    currentPrice: s.current,
+    openPrice: s.open,
+    closePrice: s.prevClose,
+    highPrice: s.high,
+    lowPrice: s.low,
+    changePercent: s.changePercent,
+    changeAmount: s.change,
+    volume: s.volume,
+    turnover: s.amount,
+    turnoverRate: 0,
+    pe: 0,
+    pb: 0,
+    marketCap: 0,
+    totalShares: 0,
+    circulateShares: 0
+  } as StockInfo
+}
+
 function onBoardChange() {
   currentPage.value = 1
+  router.push(boardPath(selectedBoard.value))
   loadData()
 }
 
 async function loadData() {
   loading.value = true
   try {
+    const keyword = searchKeyword.value.trim()
+    if (keyword) {
+      const res = await searchStocksApi(keyword)
+      let list = ((res.data.data || []) as any[])
+        .filter((s) => s.market !== 'US')
+        .map(mapStock)
+        .filter((s) => matchesBoard(s.code))
+      // 客户端排序
+      list.sort((a: any, b: any) => {
+        const va = safeScore(a[sortField.value])
+        const vb = safeScore(b[sortField.value])
+        return sortOrder.value === 'desc' ? vb - va : va - vb
+      })
+      stockList.value = list
+      total.value = list.length
+      return
+    }
     const res = await getSinaAStocks(currentPage.value, pageSize.value, { board: selectedBoard.value })
     const data = res.data
     if (data) {
-      let list = (data.data || []).map((s: any) => ({
-        code: s.code,
-        name: s.name,
-        market: 'A',
-        currentPrice: s.current,
-        openPrice: s.open,
-        closePrice: s.prevClose,
-        highPrice: s.high,
-        lowPrice: s.low,
-        changePercent: s.changePercent,
-        changeAmount: s.change,
-        volume: s.volume,
-        turnover: s.amount,
-        turnoverRate: 0,
-        pe: 0,
-        pb: 0,
-        marketCap: 0,
-        totalShares: 0,
-        circulateShares: 0
-      })) as StockInfo[]
-      if (searchKeyword.value.trim()) {
-        const kw = searchKeyword.value.trim().toLowerCase()
-        list = list.filter(s => s.code.toLowerCase().includes(kw) || s.name.toLowerCase().includes(kw))
-      }
-      // 客户端排序
+      let list = (data.data || []).map(mapStock)
       list.sort((a: any, b: any) => {
         const va = safeScore(a[sortField.value])
         const vb = safeScore(b[sortField.value])
@@ -222,7 +276,17 @@ function goToDetail(row: StockInfo) {
 }
 
 onMounted(() => {
+  selectedBoard.value = boardFromRoute()
   loadData()
+})
+
+watch(() => [route.path, route.query.board], () => {
+  const nextBoard = boardFromRoute()
+  if (selectedBoard.value !== nextBoard) {
+    selectedBoard.value = nextBoard
+    currentPage.value = 1
+    loadData()
+  }
 })
 </script>
 
@@ -272,7 +336,44 @@ onMounted(() => {
 }
 
 .board-tabs {
+  display: grid;
+  gap: 12px;
   margin-bottom: 12px;
+}
+
+.board-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  button {
+    display: grid;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid #dfeee5;
+    border-radius: 8px;
+    background: #f7fcf9;
+    color: #303133;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+    strong {
+      font-size: 17px;
+      color: #18965b;
+    }
+
+    span {
+      color: #606266;
+      font-size: 13px;
+    }
+
+    &.active,
+    &:hover {
+      border-color: #25b26b;
+      box-shadow: 0 8px 18px rgba(24, 150, 91, 0.12);
+    }
+  }
 }
 
 .stock-table {
@@ -317,5 +418,11 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+@media (max-width: 760px) {
+  .board-shortcuts {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

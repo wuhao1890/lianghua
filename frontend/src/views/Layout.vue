@@ -25,6 +25,8 @@
             <span>股票</span>
           </template>
           <el-menu-item index="/a-stocks">A股</el-menu-item>
+          <el-menu-item index="/chinext-stocks">创业板</el-menu-item>
+          <el-menu-item index="/star-stocks">科创板</el-menu-item>
           <el-menu-item index="/us-stocks">美股</el-menu-item>
         </el-sub-menu>
 
@@ -172,7 +174,7 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const stockPaths = ['/market', '/a-stocks', '/us-stocks']
+const stockPaths = ['/market', '/a-stocks', '/chinext-stocks', '/star-stocks', '/us-stocks']
 const assetPaths = ['/gold', '/funds']
 const tradePaths = ['/trade', '/position', '/history', '/analysis']
 const userPaths = ['/dashboard', '/recharge', '/alert-settings', '/ai-agent', '/admin/recharge']

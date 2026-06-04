@@ -385,6 +385,7 @@ function Normalize-LabState([object]$State) {
       updatedAt = Get-Value $State "updatedAt" $null
       customStrategies = @()
       simulatedTrades = @()
+      researchFocuses = @(Get-Value $State "researchFocuses" @())
       researchFocus = Get-Value $State "researchFocus" $null
       blacklistItems = @(Get-Value $State "blacklistItems" @())
       alertSettings = Get-Value $State "alertSettings" $null
@@ -395,7 +396,11 @@ function Normalize-LabState([object]$State) {
   if ($null -eq $State.evolutionLog) { $State | Add-Member -NotePropertyName evolutionLog -NotePropertyValue @() -Force }
   if ($null -eq $State.customStrategies) { $State | Add-Member -NotePropertyName customStrategies -NotePropertyValue @() -Force }
   if ($null -eq $State.simulatedTrades) { $State | Add-Member -NotePropertyName simulatedTrades -NotePropertyValue @() -Force }
+  if ($null -eq $State.researchFocuses) { $State | Add-Member -NotePropertyName researchFocuses -NotePropertyValue @() -Force }
+  if (($State.researchFocuses -isnot [array]) -and ($null -ne $State.researchFocuses)) { $State.researchFocuses = @($State.researchFocuses) }
+  if (($State.researchFocuses.Count -eq 0) -and ($null -ne $State.researchFocus)) { $State.researchFocuses = @($State.researchFocus) }
   if ($null -eq $State.researchFocus) { $State | Add-Member -NotePropertyName researchFocus -NotePropertyValue $null -Force }
+  if (($State.researchFocuses.Count -gt 0) -and ($null -eq $State.researchFocus)) { $State.researchFocus = $State.researchFocuses[0] }
   if ($null -eq $State.blacklistItems) { $State | Add-Member -NotePropertyName blacklistItems -NotePropertyValue @() -Force }
   if ($null -eq $State.alertSettings) { $State | Add-Member -NotePropertyName alertSettings -NotePropertyValue $null -Force }
   if ($champion -ne (Get-Value $State "champion" $null)) { $State.champion = $champion }

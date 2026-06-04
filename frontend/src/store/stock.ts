@@ -1,13 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { StockInfo, KlineData } from '@/types'
-import { getStockList as getListApi, getRealtimeQuote as getQuoteApi, getKlineData as getKlineApi, getSinaAStocks, getSinaUSStocks, getSinaRealtime, getSinaIndices } from '@/api/stock'
+import { getStockList as getListApi, getRealtimeQuote as getQuoteApi, getKlineData as getKlineApi, getSinaAStocks, getSinaUSStocks, getSinaRealtime, getSinaIndices, searchStocks as searchStocksApi } from '@/api/stock'
 
 function mapSinaStock(s: any): StockInfo {
   return {
     code: s.code,
     name: s.name,
-    market: 'A' as const,
+    market: (s.market === 'US' ? 'US' : 'A') as any,
     currentPrice: s.current,
     openPrice: s.open,
     closePrice: s.prevClose,
@@ -53,15 +53,19 @@ export const useStockStore = defineStore('stock', () => {
       return
     }
 
-    // 2. 缓存没有则尝试精确代码查询新浪
+    // 2. 缓存没有则查后端全市场搜索，覆盖A股、创业板、科创板、美股
     try {
-      let sinaCode = keyword.trim()
-      if (/^\d{6}$/.test(sinaCode)) {
-        if (sinaCode.startsWith('6')) sinaCode = 'sh' + sinaCode
-        else sinaCode = 'sz' + sinaCode
+      const res = await searchStocksApi(keyword.trim())
+      let list = res.data.data || []
+      if (!list.length) {
+        let sinaCode = keyword.trim()
+        if (/^\d{6}$/.test(sinaCode)) {
+          if (sinaCode.startsWith('6')) sinaCode = 'sh' + sinaCode
+          else sinaCode = 'sz' + sinaCode
+        }
+        const realtime = await getSinaRealtime(sinaCode)
+        list = realtime.data.data || []
       }
-      const res = await getSinaRealtime(sinaCode)
-      const list = res.data.data || []
       searchResults.value = list.map(mapSinaStock)
     } catch {
       searchResults.value = []

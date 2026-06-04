@@ -72,6 +72,13 @@ function filterAStocksByBoard(board = "") {
   return A_STOCKS;
 }
 
+function boardNameByCode(code = "") {
+  if (/^300/.test(code)) return "创业板";
+  if (/^688/.test(code)) return "科创板";
+  if (/^gb_/.test(code)) return "美股";
+  return "主板";
+}
+
 const BULLISH_WORDS = ["增持", "买入", "上涨", "增长", "盈利", "突破", "利好", "回购", "中标", "分红", "创新高", "扩张", "净利润", "翻身仗", "拉升", "洗出去"];
 const BEARISH_WORDS = ["减持", "卖出", "下跌", "亏损", "处罚", "风险", "诉讼", "退市", "暴跌", "利空", "问询", "监管", "下降", "磨顶", "破9", "阴跌", "套人", "后悔", "跌停", "水下", "脑壳痛"];
 
@@ -824,41 +831,100 @@ function toStockInfo(stock: AnyRecord) {
   };
 }
 
-async function fetchKline(code: string, limit = 120) {
-  const secid = code.startsWith("6") ? `1.${code}` : `0.${code}`;
-  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt=${limit}`;
+function klinePeriodToEastmoney(period = "daily") {
+  if (period === "weekly") return "102";
+  if (period === "monthly") return "103";
+  return "101";
+}
+
+function klinePeriodToTencent(period = "daily") {
+  if (period === "weekly") return { key: "qfqweek", value: "week" };
+  if (period === "monthly") return { key: "qfqmonth", value: "month" };
+  return { key: "qfqday", value: "day" };
+}
+
+function normalizeKlineRows(rows: string[][], period: string, source: string) {
+  const parsed = rows.map((row) => {
+    const open = Number(row[1]);
+    const close = Number(row[2]);
+    const high = Number(row[3]);
+    const low = Number(row[4]);
+    return { date: row[0], price: [open, close, low, high], volume: Number(row[5]) || 0 };
+  }).filter((row: AnyRecord) => row.date && row.price.every((value: number) => Number.isFinite(value) && value > 0));
+  return {
+    dates: parsed.map((row: AnyRecord) => row.date),
+    prices: parsed.map((row: AnyRecord) => row.price),
+    volumes: parsed.map((row: AnyRecord) => row.volume),
+    turnover: [],
+    period,
+    source
+  };
+}
+
+async function fetchTencentKline(code: string, period = "daily", limit = 120) {
+  const prefixed = stockPrefix(code);
+  const tencent = klinePeriodToTencent(period);
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefixed},${tencent.value},,,${limit},qfq`;
   try {
-    const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Referer: "https://gu.qq.com"
+      }
+    });
+    const json = await response.json() as AnyRecord;
+    const rows = json?.data?.[prefixed]?.[tencent.key] || [];
+    if (Array.isArray(rows) && rows.length) return normalizeKlineRows(rows, period, "tencent-kline");
+  } catch {
+    // Keep trying other sources.
+  }
+  return null;
+}
+
+async function fetchKline(code: string, period = "daily", limit = 120) {
+  const secid = code.startsWith("6") ? `1.${code}` : `0.${code}`;
+  const klt = klinePeriodToEastmoney(period);
+  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${limit}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Referer: "https://quote.eastmoney.com"
+      }
+    });
     const text = await response.text();
     const json = JSON.parse(text);
     const rows = json?.data?.klines || [];
     if (rows.length) {
+      const parsed = rows.map((row: string) => {
+        const fields = row.split(",");
+        const open = Number(fields[1]);
+        const close = Number(fields[2]);
+        const high = Number(fields[3]);
+        const low = Number(fields[4]);
+        return { date: fields[0], price: [open, close, low, high], volume: Number(fields[5]) || 0, turnover: Number(fields[6]) || 0 };
+      }).filter((row: AnyRecord) => row.date && row.price.every((value: number) => Number.isFinite(value) && value > 0));
       return {
-        dates: rows.map((row: string) => row.split(",")[0]),
-        prices: rows.map((row: string) => {
-          const fields = row.split(",");
-          return [Number(fields[1]), Number(fields[2]), Number(fields[3]), Number(fields[4])];
-        }),
-        volumes: rows.map((row: string) => Number(row.split(",")[5]) || 0),
-        turnover: rows.map((row: string) => Number(row.split(",")[6]) || 0),
+        dates: parsed.map((row: AnyRecord) => row.date),
+        prices: parsed.map((row: AnyRecord) => row.price),
+        volumes: parsed.map((row: AnyRecord) => row.volume),
+        turnover: parsed.map((row: AnyRecord) => row.turnover),
+        period,
         source: "eastmoney-kline"
       };
     }
   } catch {
     // Keep the API usable without inventing historical candles.
   }
-  const stock = await stockMeta(code);
-  const today = new Date().toISOString().slice(0, 10);
-  const open = Number(stock.open || stock.current || 0);
-  const close = Number(stock.current || open || 0);
-  const high = Number(stock.high || Math.max(open, close) || 0);
-  const low = Number(stock.low || Math.min(open, close) || 0);
+  const tencent = await fetchTencentKline(code, period, limit);
+  if (tencent?.dates?.length) return tencent;
   return {
-    dates: [today],
-    prices: [[open, close, low, high]],
-    volumes: [Number(stock.volume || 0)],
-    turnover: [Number(stock.amount || 0)],
-    source: "sina-realtime-fallback"
+    dates: [],
+    prices: [],
+    volumes: [],
+    turnover: [],
+    period,
+    source: "history-unavailable"
   };
 }
 
@@ -923,6 +989,41 @@ function moneyFlowFromQuote(stock: AnyRecord, sentimentScore = 50) {
 async function stockMeta(code: string) {
   const list = await fetchSina([stockPrefix(code)]);
   return (list[0] || { code, name: code, current: 0, changePercent: 0 }) as AnyRecord;
+}
+
+async function searchStocks(keyword: string) {
+  const kw = keyword.trim().toLowerCase();
+  if (!kw) return [];
+  const exactCodes = new Set<string>();
+  if (/^\d{6}$/.test(kw)) exactCodes.add(stockPrefix(kw));
+  if (/^[a-z]{1,6}$/i.test(kw)) exactCodes.add(`gb_${kw.toLowerCase()}`);
+
+  const pool = [...A_STOCKS, ...US_STOCKS];
+  const candidates = pool.filter((code) => {
+    const rawCode = code.replace(/^sh|^sz|^gb_/, "").toLowerCase();
+    if (rawCode.includes(kw) || code.toLowerCase().includes(kw)) return true;
+    return false;
+  });
+  exactCodes.forEach((code) => candidates.unshift(code));
+
+  const uniqueCodes = [...new Set(candidates)].slice(0, 40);
+  let list = uniqueCodes.length ? await fetchSina(uniqueCodes) : [];
+  if (!/^\d{6}$/.test(kw)) {
+    const broader = await fetchSina(pool.slice(0, 120));
+    list = [...list, ...broader.filter((item: AnyRecord) => String(item.name || "").toLowerCase().includes(kw))];
+  }
+  const unique = new Map<string, AnyRecord>();
+  for (const item of list) {
+    const code = String(item.code || "").toLowerCase();
+    if (!code || unique.has(code)) continue;
+    const market = String(item.market || "").toUpperCase() === "US" ? "US" : "A";
+    unique.set(code, {
+      ...item,
+      board: market === "US" ? "美股" : boardNameByCode(code),
+      market
+    });
+  }
+  return [...unique.values()].slice(0, 30);
 }
 
 async function fetchEastmoneyNews(code: string, keyword: string) {
@@ -1429,6 +1530,7 @@ async function route(req: Request) {
 
   if (method === "GET" && path === "/stock/sina/indices") return send(await fetchSina(INDICES));
   if (method === "GET" && path === "/stock/sina/realtime") return send(await fetchSina((url.searchParams.get("codes") || "").split(",").filter(Boolean).map(stockPrefix)));
+  if (method === "GET" && path === "/stock/search") return send(await searchStocks(url.searchParams.get("keyword") || ""));
 
   const realtime = path.match(/^\/stock\/realtime\/([^/]+)$/);
   if (method === "GET" && realtime) {
@@ -1444,7 +1546,7 @@ async function route(req: Request) {
   }
 
   const kline = path.match(/^\/stock\/kline\/([^/]+)$/);
-  if (method === "GET" && kline) return send(await fetchKline(kline[1]));
+  if (method === "GET" && kline) return send(await fetchKline(kline[1], url.searchParams.get("period") || "daily"));
 
   const indicator = path.match(/^\/analysis\/(signal|indicators)\/([^/]+)$/);
   if (method === "GET" && indicator) {

@@ -18,6 +18,7 @@ const props = withDefaults(defineProps<{
 
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
+let resizeObserver: ResizeObserver | null = null
 
 function buildOption() {
   if (!props.klineData || !chart) return
@@ -41,7 +42,32 @@ function buildOption() {
     volumes = klines.map(k => k.volume)
   }
 
-  if (!dates || dates.length === 0) return
+  const normalized = dates
+    .map((date, index) => ({
+      date,
+      price: (prices[index] || []).map(Number),
+      volume: Number(volumes[index] || 0)
+    }))
+    .filter((item) => item.date && item.price.length === 4 && item.price.every((value) => Number.isFinite(value) && value > 0))
+
+  dates = normalized.map((item) => item.date)
+  prices = normalized.map((item) => item.price)
+  volumes = normalized.map((item) => item.volume)
+
+  if (!dates || dates.length < 2) {
+    chart.clear()
+    chart.setOption({
+      title: {
+        text: '历史K线暂不可用',
+        subtext: '当前没有拿到足够真实历史数据，已停止绘制单根矩形K线',
+        left: 'center',
+        top: 'center',
+        textStyle: { color: '#606266', fontSize: 16 },
+        subtextStyle: { color: '#909399', fontSize: 12 }
+      }
+    }, true)
+    return
+  }
 
   const showMA = props.indicators.includes('MA')
   const showMACD = props.indicators.includes('MACD')
@@ -147,6 +173,7 @@ function buildOption() {
     )
   }
 
+  chart.clear()
   chart.setOption({
     tooltip: {
       trigger: 'axis',
@@ -165,7 +192,8 @@ function buildOption() {
     yAxis: yAxisConfig,
     dataZoom: dataZoomConfig,
     series
-  })
+  }, true)
+  requestAnimationFrame(() => chart?.resize())
 }
 
 function calcMA(data: number[], dayCount: number): (number | null)[] {
@@ -223,12 +251,16 @@ onMounted(async () => {
   if (chartRef.value) {
     chart = echarts.init(chartRef.value)
     buildOption()
+    resizeObserver = new ResizeObserver(() => handleResize())
+    resizeObserver.observe(chartRef.value)
     window.addEventListener('resize', handleResize)
   }
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  resizeObserver?.disconnect()
+  resizeObserver = null
   chart?.dispose()
 })
 
