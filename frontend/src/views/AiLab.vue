@@ -55,6 +55,40 @@
       </div>
     </section>
 
+    <section class="panel portfolio-panel">
+      <div class="panel-head">
+        <div>
+          <h3>组合资金方案</h3>
+          <span>{{ activePortfolioPlan.summary }}</span>
+        </div>
+      </div>
+      <div class="portfolio-grid">
+        <article v-for="bucket in activePortfolioPlan.buckets" :key="bucket.name" class="portfolio-bucket">
+          <div class="bucket-head">
+            <div>
+              <strong>{{ bucket.name }}</strong>
+              <span>{{ bucket.description }}</span>
+            </div>
+            <b>{{ bucket.ratio }}%</b>
+          </div>
+          <div class="bucket-money">
+            <span>目标资金</span>
+            <strong>{{ formatMoney(bucket.targetAmount) }}</strong>
+          </div>
+          <div class="bucket-items">
+            <div v-for="item in bucket.items" :key="item.experimentId" class="bucket-item">
+              <div>
+                <strong>{{ item.assetName }}</strong>
+                <span>{{ zhText(item.strategyName) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · {{ item.score }}分</span>
+              </div>
+              <em>{{ formatMoney(item.targetAmount) }}</em>
+            </div>
+            <small v-if="!bucket.items.length">本组等待真实数据触发买入条件</small>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section class="main-grid">
       <article class="panel champion-panel">
         <div class="panel-head">
@@ -129,7 +163,7 @@
         <div class="trade-ledger">
           <div v-for="trade in simulatedTrades.slice(0, 8)" :key="trade.id" class="trade-row">
             <strong>{{ trade.assetName }} · {{ zhText(trade.strategyName) }}</strong>
-            <span>{{ trade.action }} · {{ trade.status }} · 买入时间 {{ formatTime(trade.createdAt) }}</span>
+            <span>{{ trade.bucketName || '未分组' }} · {{ trade.action }} · {{ trade.status }} · 投入 {{ formatMoney(trade.amount) }} · 买入时间 {{ formatTime(trade.createdAt) }}</span>
             <small>
               周期 {{ trade.holdingPeriod || '等待周期识别' }} · 已持有 {{ trade.holdingGenerations || 0 }} 代 ·
               买入 {{ formatPrice(trade.buyPrice) }} · 当前 {{ formatPrice(trade.currentPrice || trade.buyPrice) }} ·
@@ -421,10 +455,40 @@ interface SimulatedTrade {
   floatingProfitPct?: number
   holdingGenerations?: number
   holdingPeriod?: string
+  bucketName?: string
+  bucketRatio?: number
   closeReason?: string
   closedGeneration?: number
   createdAt: string
   closedAt?: string
+}
+
+interface PortfolioItem {
+  experimentId: string
+  assetCode: string
+  assetName: string
+  strategyName: string
+  score: number
+  rank: RankKey | string
+  signal?: Signal | string
+  targetAmount: number
+  decision: string
+}
+
+interface PortfolioBucket {
+  name: string
+  ratio: number
+  targetAmount: number
+  maxPositions: number
+  description: string
+  items: PortfolioItem[]
+}
+
+interface PortfolioPlan {
+  generatedAt: string
+  capital: number
+  summary: string
+  buckets: PortfolioBucket[]
 }
 
 interface CustomStrategy {
@@ -448,6 +512,7 @@ const evolutionLog = ref<Array<{ id: string; title: string; detail: string }>>([
 const iterationHistory = ref<any[]>([])
 const simulatedTrades = ref<SimulatedTrade[]>([])
 const customStrategies = ref<CustomStrategy[]>([])
+const portfolioPlan = ref<PortfolioPlan | null>(null)
 const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
 
 const customForm = reactive({
@@ -469,6 +534,7 @@ const sortedAssets = computed(() => [...assets.value].sort((a, b) => b.aiScore -
 const sortedExperiments = computed(() => [...experiments.value].sort((a, b) => b.score - a.score))
 const topFiveStrategies = computed(() => sortedExperiments.value.slice(0, 5))
 const champion = computed(() => sortedExperiments.value[0] || null)
+const activePortfolioPlan = computed(() => portfolioPlan.value?.buckets?.length ? portfolioPlan.value : buildPortfolioPlan())
 const bestReturn = computed(() => champion.value?.returnPct || 0)
 const simulatedPosition = computed(() => champion.value ? capital.value * (champion.value.position / 100) : 0)
 const historicalProfit = computed(() => champion.value ? simulatedPosition.value * (champion.value.returnPct / 100) : 0)
@@ -558,6 +624,7 @@ function applyLabState(state: any) {
   experiments.value = Array.isArray(state.experiments) ? state.experiments.map(hydrateExperiment) : []
   evolutionLog.value = Array.isArray(state.evolutionLog) ? state.evolutionLog : []
   simulatedTrades.value = Array.isArray(state.simulatedTrades) ? state.simulatedTrades : []
+  portfolioPlan.value = normalizePortfolioPlan(state.portfolioPlan)
   if (Array.isArray(state.customStrategies)) {
     customStrategies.value = state.customStrategies
     saveCustomStrategies()
@@ -585,6 +652,40 @@ function hydrateExperiment(item: LabExperiment): LabExperiment {
   }
 }
 
+function asArray<T = any>(value: T | T[] | null | undefined): T[] {
+  if (Array.isArray(value)) return value
+  if (value == null) return []
+  return [value]
+}
+
+function normalizePortfolioPlan(plan: any): PortfolioPlan | null {
+  if (!plan?.buckets) return null
+  const buckets = asArray(plan.buckets).map((bucket: any) => ({
+    name: String(bucket.name || ''),
+    ratio: Number(bucket.ratio || 0),
+    targetAmount: Number(bucket.targetAmount || 0),
+    maxPositions: Number(bucket.maxPositions || 0),
+    description: String(bucket.description || ''),
+    items: asArray(bucket.items).map((item: any) => ({
+      experimentId: String(item.experimentId || ''),
+      assetCode: String(item.assetCode || ''),
+      assetName: String(item.assetName || ''),
+      strategyName: String(item.strategyName || ''),
+      score: Number(item.score || 0),
+      rank: String(item.rank || 'bronze'),
+      signal: String(item.signal || 'HOLD'),
+      targetAmount: Number(item.targetAmount || 0),
+      decision: String(item.decision || '')
+    }))
+  }))
+  return {
+    generatedAt: String(plan.generatedAt || new Date().toISOString()),
+    capital: Number(plan.capital || capital.value),
+    summary: String(plan.summary || '组合按稳健、激进、避险三块分配资金，并在每块内部挑选候选。'),
+    buckets
+  }
+}
+
 async function persistLabState() {
   const payload = {
     generation: generation.value,
@@ -596,6 +697,7 @@ async function persistLabState() {
     customStrategies: customStrategies.value,
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
+    portfolioPlan: activePortfolioPlan.value,
     champion: champion.value,
     lastRunAt: new Date().toISOString()
   }
@@ -614,6 +716,7 @@ async function persistIteration() {
     experiments: experiments.value,
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
+    portfolioPlan: activePortfolioPlan.value,
     champion: champion.value
   }
   saveLabStateLocal({
@@ -1224,9 +1327,67 @@ function tradePlanFor(item: LabExperiment) {
   }
 }
 
+function portfolioBucketDefs() {
+  return [
+    { name: '稳健产品', ratio: 30, maxPositions: 2, description: '优先基金和低回撤策略，用来稳定组合净值。' },
+    { name: '激进产品', ratio: 50, maxPositions: 2, description: '优先股票和高分高收益策略，用来争取超额收益。' },
+    { name: '避险产品', ratio: 20, maxPositions: 1, description: '优先黄金、白银等金属，用来对冲波动。' }
+  ]
+}
+
+function bucketNameFor(item: LabExperiment) {
+  if (item.assetType === 'gold') return '避险产品'
+  if (item.assetType === 'fund' || (item.drawdownPct <= 3.5 && item.style !== 'trend')) return '稳健产品'
+  return '激进产品'
+}
+
+function buildPortfolioPlan(): PortfolioPlan {
+  const ordered = sortedExperiments.value
+  const buckets = portfolioBucketDefs().map((bucket) => {
+    const seenAssetCodes = new Set<string>()
+    const candidates: LabExperiment[] = []
+    for (const item of ordered) {
+      if (bucketNameFor(item) !== bucket.name || seenAssetCodes.has(item.assetCode)) continue
+      seenAssetCodes.add(item.assetCode)
+      candidates.push(item)
+      if (candidates.length >= bucket.maxPositions) break
+    }
+    const targetAmount = Number((capital.value * bucket.ratio / 100).toFixed(2))
+    const perAmount = candidates.length ? Number((targetAmount / candidates.length).toFixed(2)) : 0
+    return {
+      ...bucket,
+      targetAmount,
+      items: candidates.map((item) => ({
+        experimentId: item.id,
+        assetCode: item.assetCode,
+        assetName: item.assetName,
+        strategyName: item.strategyName,
+        score: item.score,
+        rank: item.rank,
+        signal: item.signal,
+        targetAmount: perAmount,
+        decision: item.signal === 'BUY' ? `按${bucket.name}预算纳入买入组合` : '未触发买入，先保留为本组观察候选'
+      }))
+    }
+  })
+  return {
+    generatedAt: new Date().toISOString(),
+    capital: capital.value,
+    buckets,
+    summary: '组合先按稳健、激进、避险三块分配资金，再在每块内部挑选冠军和候选；新冠军先比较老持仓收益、回撤和周期，再决定替换、部分保留或继续观察。'
+  }
+}
+
 function executeSimulatedTrades(previousChampion: LabExperiment | null) {
   const now = new Date().toISOString()
   const maxOpenPositions = 5
+  const plan = buildPortfolioPlan()
+  portfolioPlan.value = plan
+  const planItems = plan.buckets.flatMap((bucket) => bucket.items.map((item) => ({
+    ...item,
+    bucketName: bucket.name,
+    bucketRatio: bucket.ratio
+  })))
 
   for (const trade of simulatedTrades.value) {
     if (trade.status !== '持仓中') continue
@@ -1244,6 +1405,8 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       trade.floatingProfitPct = floatingProfitPct
       trade.holdingGenerations = holdingGenerations
       trade.holdingPeriod = cycle.label
+      trade.bucketName = trade.bucketName || bucketNameFor(item)
+      const sameBucketNewChampion = planItems.find((target) => target.bucketName === trade.bucketName && target.assetCode !== trade.assetCode && target.score >= item.score + 8)
       if (item.signal === 'SELL' && holdingGenerations >= cycle.min) {
         shouldClose = true
         closeReason = '模型触发卖出信号'
@@ -1259,6 +1422,9 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       } else if (item.drawdownPct >= 8 && holdingGenerations >= cycle.min) {
         shouldClose = true
         closeReason = '回撤扩大触发风控'
+      } else if (sameBucketNewChampion && holdingGenerations >= cycle.min) {
+        shouldClose = true
+        closeReason = '同组新冠军优势明显，调仓释放资金'
       }
     }
     if (shouldClose && price > 0) {
@@ -1278,7 +1444,9 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
     .filter((trade) => trade.status === '持仓中')
     .reduce((sum, trade) => sum + Number(trade.amount || 0), 0))
 
-  for (const item of topFiveStrategies.value) {
+  for (const target of planItems) {
+    const item = experiments.value.find((experiment) => experiment.id === target.experimentId)
+    if (!item) continue
     if (item.signal !== 'BUY' || item.position <= 0) continue
     const openCount = simulatedTrades.value.filter((trade) => trade.status === '持仓中').length
     if (openCount >= maxOpenPositions) continue
@@ -1287,7 +1455,12 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
     if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status !== '持仓中' && generation.value - (trade.closedGeneration || trade.generation) < 3)) continue
     const price = assetPriceFor(item)
     if (price <= 0) continue
-    const amount = Math.min(capital.value * (item.position / 100), availableCapital)
+    const bucket = plan.buckets.find((itemBucket) => itemBucket.name === target.bucketName)
+    const bucketUsed = simulatedTrades.value
+      .filter((trade) => trade.status === '持仓中' && trade.bucketName === target.bucketName)
+      .reduce((sum, trade) => sum + Number(trade.amount || 0), 0)
+    const bucketAvailable = bucket ? Math.max(0, bucket.targetAmount - bucketUsed) : availableCapital
+    const amount = Math.min(Number(target.targetAmount || 0), availableCapital, bucketAvailable)
     if (amount < 1000) continue
     const quantity = amount / price
     const cycle = holdingPeriodFor(item)
@@ -1311,6 +1484,8 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       floatingProfitPct: 0,
       holdingGenerations: 0,
       holdingPeriod: cycle.label,
+      bucketName: target.bucketName,
+      bucketRatio: target.bucketRatio,
       closeReason: '',
       createdAt: now
     })
@@ -1421,7 +1596,7 @@ function zhText(value?: string) {
   ].reduce((text, pair) => text.split(pair[0]).join(pair[1]), String(value))
 }
 
-function rankName(rank?: RankKey) {
+function rankName(rank?: RankKey | string) {
   if (rank === 'king') return '王者'
   if (rank === 'platinum') return '铂金'
   if (rank === 'gold') return '黄金'
@@ -1450,13 +1625,13 @@ function assetTypeText(type?: AssetType) {
   return '-'
 }
 
-function signalText(signal?: Signal) {
+function signalText(signal?: Signal | string) {
   if (signal === 'BUY') return '买入'
   if (signal === 'SELL') return '卖出'
   return '观望'
 }
 
-function signalClass(signal?: Signal) {
+function signalClass(signal?: Signal | string) {
   if (signal === 'BUY') return 'up'
   if (signal === 'SELL') return 'down'
   return ''
@@ -1597,6 +1772,96 @@ function styleText(style?: string) {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
   gap: 16px;
+}
+
+.portfolio-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.portfolio-bucket {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.bucket-head,
+.bucket-money,
+.bucket-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bucket-head {
+  margin-bottom: 10px;
+
+  strong {
+    display: block;
+    color: #303133;
+  }
+
+  span {
+    display: block;
+    margin-top: 4px;
+    color: #606266;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  b {
+    color: #c2410c;
+    font-size: 20px;
+  }
+}
+
+.bucket-money {
+  padding: 8px 0;
+  border-top: 1px solid #eef0f4;
+  border-bottom: 1px solid #eef0f4;
+
+  span {
+    color: #909399;
+    font-size: 12px;
+  }
+}
+
+.bucket-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+
+  small {
+    color: #909399;
+  }
+}
+
+.bucket-item {
+  align-items: flex-start;
+
+  strong,
+  span {
+    display: block;
+  }
+
+  strong {
+    color: #303133;
+  }
+
+  span {
+    margin-top: 3px;
+    color: #606266;
+    font-size: 12px;
+  }
+
+  em {
+    color: #303133;
+    font-style: normal;
+    white-space: nowrap;
+  }
 }
 
 .panel {
@@ -2017,6 +2282,7 @@ function styleText(style?: string) {
 @media (max-width: 980px) {
   .main-grid,
   .bottom-grid,
+  .portfolio-grid,
   .kpi-grid {
     grid-template-columns: 1fr;
   }

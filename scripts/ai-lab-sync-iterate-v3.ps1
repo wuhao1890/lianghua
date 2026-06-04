@@ -439,8 +439,9 @@ function Get-SeedAssets {
   foreach ($code in @("600519", "600036", "601318", "600276", "000858", "002594", "300033", "300059", "300274", "300308", "300750", "300760", "688008", "688036", "688111", "688223", "688599", "688981")) {
     try {
       $quote = Get-ApiData "/api/stock/realtime/$code"
-      if ($quote -and [double](Get-Value $quote "current" 0) -gt 0) {
-        $assets += New-LabAsset "stock" $code ([string](Get-Value $quote "name" $code)) ([double](Get-Value $quote "current" 0)) ([double](Get-Value $quote "changePercent" 0)) "新浪公开股票行情"
+      $currentPrice = [double](Get-Value $quote "currentPrice" (Get-Value $quote "current" 0))
+      if ($quote -and $currentPrice -gt 0) {
+        $assets += New-LabAsset "stock" $code ([string](Get-Value $quote "name" $code)) $currentPrice ([double](Get-Value $quote "changePercent" 0)) "新浪公开股票行情"
       }
     } catch { Write-Log "seed stock $code skipped: $($_.Exception.Message)" }
   }
@@ -586,6 +587,135 @@ function Add-TradeExperience([object]$Experiment, [object]$Trade, [string]$Close
   return $Experiment
 }
 
+function Get-ExperimentBucketName([object]$Experiment) {
+  $assetType = [string](Get-Value $Experiment "assetType" "")
+  $style = [string](Get-Value $Experiment "style" "")
+  $drawdownPct = [double](Get-Value $Experiment "drawdownPct" 0)
+  if ($assetType -eq "gold") { return "避险产品" }
+  if ($assetType -eq "fund" -or ($drawdownPct -le 3.5 -and $style -ne "trend")) { return "稳健产品" }
+  return "激进产品"
+}
+
+function Get-PortfolioBuckets() {
+  return @(
+    [pscustomobject]@{ name = "稳健产品"; ratio = 30; maxPositions = 2; description = "优先基金和低回撤策略，用来稳定组合净值。" },
+    [pscustomobject]@{ name = "激进产品"; ratio = 50; maxPositions = 2; description = "优先股票和高分高收益策略，用来争取超额收益。" },
+    [pscustomobject]@{ name = "避险产品"; ratio = 20; maxPositions = 1; description = "优先黄金、白银等金属，用来对冲波动。" }
+  )
+}
+
+function Build-PortfolioPlan([object]$State) {
+  $capital = [double](Get-Value $State "capital" 100000)
+  $experiments = @($State.experiments | Sort-Object -Property score, returnPct -Descending)
+  $buckets = @()
+  foreach ($bucket in Get-PortfolioBuckets) {
+    $candidatePool = @($experiments | Where-Object {
+      (Get-ExperimentBucketName $_) -eq $bucket.name
+    })
+    $seenAssetCodes = @{}
+    $candidates = @()
+    foreach ($candidate in $candidatePool) {
+      $assetCode = [string](Get-Value $candidate "assetCode" "")
+      if ([string]::IsNullOrWhiteSpace($assetCode) -or $seenAssetCodes.ContainsKey($assetCode)) { continue }
+      $seenAssetCodes[$assetCode] = $true
+      $candidates += $candidate
+      if ($candidates.Count -ge [int]$bucket.maxPositions) { break }
+    }
+    $targetAmount = [math]::Round($capital * [double]$bucket.ratio / 100, 2)
+    $perAmount = if ($candidates.Count -gt 0) { [math]::Round($targetAmount / $candidates.Count, 2) } else { 0 }
+    $items = @()
+    foreach ($candidate in $candidates) {
+      $items += [pscustomobject]@{
+        experimentId = Get-Value $candidate "id" ""
+        assetCode = Get-Value $candidate "assetCode" ""
+        assetName = Get-Value $candidate "assetName" ""
+        strategyName = Get-Value $candidate "strategyName" ""
+        score = Get-Value $candidate "score" 0
+        rank = Get-Value $candidate "rank" ""
+        signal = Get-Value $candidate "signal" "HOLD"
+        targetAmount = $perAmount
+        decision = if ([string](Get-Value $candidate "signal" "") -eq "BUY") { "按 $($bucket.name) 预算纳入买入组合" } else { "未触发买入，先保留为本组观察候选" }
+      }
+    }
+    $buckets += [pscustomobject]@{
+      name = $bucket.name
+      ratio = $bucket.ratio
+      targetAmount = $targetAmount
+      maxPositions = $bucket.maxPositions
+      description = $bucket.description
+      items = @($items)
+    }
+  }
+  return [pscustomobject]@{
+    generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    capital = $capital
+    buckets = @($buckets)
+    summary = "组合先按稳健、激进、避险三块分配资金，再在每块内部挑选冠军和候选；新冠军先比较老持仓收益、回撤和周期，再决定替换、部分保留或继续观察。"
+  }
+}
+
+function Write-LabMemory([object]$State) {
+  $memoryDir = Join-Path (Get-Location) "memory"
+  if (!(Test-Path $memoryDir)) { New-Item -ItemType Directory -Path $memoryDir | Out-Null }
+  $path = Join-Path $memoryDir "ai-lab-memory.md"
+  $champion = Get-Value $State "champion" $null
+  $portfolio = Get-Value $State "portfolioPlan" $null
+  $openTrades = @((Get-Value $State "simulatedTrades" @()) | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" })
+  $lessons = @()
+  foreach ($experiment in @((Get-Value $State "experiments" @()) | Sort-Object -Property score, returnPct -Descending | Select-Object -First 12)) {
+    foreach ($lesson in @((Get-Value $experiment "tradeLessons" @()))) {
+      if ($lesson) { $lessons += " - $([string]$lesson)" }
+    }
+  }
+  if ($lessons.Count -eq 0) { $lessons = @(" - 暂无完整卖出复盘，继续等待持仓周期完成。") }
+  $bucketLines = @()
+  foreach ($bucket in @((Get-Value $portfolio "buckets" @()))) {
+    $bucketLines += "### $($bucket.name) $($bucket.ratio)%"
+    $bucketLines += "- 目标金额：$($bucket.targetAmount)"
+    $bucketLines += "- 说明：$($bucket.description)"
+    foreach ($item in @($bucket.items)) {
+      $bucketLines += "  - $($item.assetName) / $($item.strategyName)：目标 $($item.targetAmount)，分数 $($item.score)，$($item.decision)"
+    }
+  }
+  $tradeLines = @()
+  foreach ($trade in $openTrades) {
+    $tradeBucketName = [string](Get-Value $trade "bucketName" "未分组")
+    $tradeAssetName = [string](Get-Value $trade "assetName" "")
+    $tradeAmount = [double](Get-Value $trade "amount" 0)
+    $tradeHoldingGenerations = [int](Get-Value $trade "holdingGenerations" 0)
+    $tradeFloatingProfit = [double](Get-Value $trade "floatingProfit" 0)
+    $tradeLines += "- ${tradeBucketName}：${tradeAssetName}，投入 ${tradeAmount}，已持有 ${tradeHoldingGenerations} 代，浮盈 ${tradeFloatingProfit}"
+  }
+  if ($tradeLines.Count -eq 0) { $tradeLines = @("- 当前没有持仓，等待组合计划触发买入。") }
+  $content = @(
+    "# AI实验室长期记忆",
+    "",
+    "更新时间：$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))",
+    "",
+    "## 当前冠军",
+    "- 标的：$([string](Get-Value $champion "assetName" "暂无"))",
+    "- 策略：$([string](Get-Value $champion "strategyName" "暂无"))",
+    "- 分数：$([string](Get-Value $champion "score" "暂无"))",
+    "",
+    "## 组合方案",
+    $bucketLines,
+    "",
+    "## 当前持仓",
+    $tradeLines,
+    "",
+    "## 交易经验",
+    $lessons,
+    "",
+    "## 下一轮学习要求",
+    "- 每个标的建立自己的历史性格：波动、新闻敏感点、技术形态、资金偏好、适合周期。",
+    "- 新冠军出现时先判断是否替换同组老持仓、部分调仓，还是共存观察。",
+    "- 所有买入必须受总资金和分组比例约束，不能重复开仓。"
+  ) | ForEach-Object {
+    if ($_ -is [array]) { $_ } else { $_ }
+  }
+  [System.IO.File]::WriteAllLines($path, [string[]]$content, [System.Text.Encoding]::UTF8)
+}
+
 function Repair-OverAllocatedTrades([array]$Trades, [double]$Capital, [int]$Generation, [string]$Now) {
   $openTrades = @($Trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" })
   $usedCapital = 0.0
@@ -616,11 +746,57 @@ function Repair-OverAllocatedTrades([array]$Trades, [double]$Capital, [int]$Gene
   return $Trades
 }
 
+function Repair-BucketAllocationTrades([array]$Trades, [object]$State, [object]$PortfolioPlan, [int]$Generation, [string]$Now) {
+  foreach ($bucket in @($PortfolioPlan.buckets)) {
+    $bucketName = [string](Get-Value $bucket "name" "")
+    $targetAmount = [double](Get-Value $bucket "targetAmount" 0)
+    if ([string]::IsNullOrWhiteSpace($bucketName) -or $targetAmount -le 0) { continue }
+    $openTrades = @($Trades | Where-Object {
+      [string](Get-Value $_ "status" "") -eq "持仓中" -and [string](Get-Value $_ "bucketName" "") -eq $bucketName
+    } | Sort-Object -Property floatingProfit, createdAt)
+    $usedAmount = 0.0
+    foreach ($trade in $openTrades) { $usedAmount += [double](Get-Value $trade "amount" 0) }
+    if ($usedAmount -le ($targetAmount * 1.15)) { continue }
+    foreach ($trade in $openTrades) {
+      if ($usedAmount -le $targetAmount) { break }
+      $experimentId = [string](Get-Value $trade "experimentId" "")
+      $experiment = @($State.experiments | Where-Object { [string](Get-Value $_ "id" "") -eq $experimentId } | Select-Object -First 1)
+      $price = if ($experiment.Count -gt 0) { Get-AssetPriceFor $State $experiment[0] } else { [double](Get-Value $trade "currentPrice" (Get-Value $trade "buyPrice" 0)) }
+      if ($price -le 0) { $price = [double](Get-Value $trade "buyPrice" 0) }
+      $buyPrice = [double](Get-Value $trade "buyPrice" 0)
+      $quantity = [double](Get-Value $trade "quantity" 0)
+      $trade | Add-Member -NotePropertyName status -NotePropertyValue "组合调仓卖出" -Force
+      $trade | Add-Member -NotePropertyName action -NotePropertyValue "卖出" -Force
+      $trade | Add-Member -NotePropertyName sellPrice -NotePropertyValue $price -Force
+      $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $Now -Force
+      $trade | Add-Member -NotePropertyName closedGeneration -NotePropertyValue $Generation -Force
+      $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round(($price - $buyPrice) * $quantity, 2)) -Force
+      $trade | Add-Member -NotePropertyName closeReason -NotePropertyValue "该分组资金超过目标比例，系统执行组合再平衡，释放资金给其他冠军组合。" -Force
+      $usedAmount -= [double](Get-Value $trade "amount" 0)
+    }
+  }
+  return $Trades
+}
+
 function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
   $now = (Get-Date).ToUniversalTime().ToString("o")
   $capital = [double](Get-Value $State "capital" 100000)
   $generation = [int](Get-Value $State "generation" 0)
-  $topFive = @($State.experiments | Sort-Object -Property score, returnPct -Descending | Select-Object -First 5)
+  $portfolioPlan = Build-PortfolioPlan $State
+  $State | Add-Member -NotePropertyName portfolioPlan -NotePropertyValue $portfolioPlan -Force
+  $planItems = @()
+  foreach ($bucket in @($portfolioPlan.buckets)) {
+    foreach ($planItem in @($bucket.items)) {
+      $planItems += [pscustomobject]@{
+        bucketName = $bucket.name
+        bucketRatio = $bucket.ratio
+        experimentId = $planItem.experimentId
+        assetCode = $planItem.assetCode
+        targetAmount = $planItem.targetAmount
+        score = $planItem.score
+      }
+    }
+  }
   $trades = @($State.simulatedTrades)
   $alerts = @()
   $closedThisRun = @{}
@@ -645,8 +821,10 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       $drawdownPct = [double](Get-Value $item "drawdownPct" 0)
       $returnPct = [double](Get-Value $item "returnPct" 0)
       $cycle = Get-StrategyHoldingPeriod $item
+      $bucketName = [string](Get-Value $trade "bucketName" (Get-ExperimentBucketName $item))
       $holdingGenerations = [math]::Max(0, $generation - [int](Get-Value $trade "generation" $generation))
       $trade | Add-Member -NotePropertyName holdingPeriod -NotePropertyValue $cycle.label -Force
+      $trade | Add-Member -NotePropertyName bucketName -NotePropertyValue $bucketName -Force
       if ($price -gt 0 -and $buyPrice -gt 0 -and $quantity -gt 0) {
         $floatingProfit = [math]::Round(($price - $buyPrice) * $quantity, 2)
         $floatingPct = [math]::Round((($price - $buyPrice) / $buyPrice) * 100, 2)
@@ -671,6 +849,16 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       } elseif ($drawdownPct -ge 8 -and $holdingGenerations -ge $cycle.min) {
         $shouldClose = $true
         $closeReason = "回撤扩大触发风控"
+      } else {
+        $sameBucketNewChampion = @($planItems | Where-Object {
+          [string](Get-Value $_ "bucketName" "") -eq $bucketName -and
+          [string](Get-Value $_ "assetCode" "") -ne [string](Get-Value $trade "assetCode" "") -and
+          [double](Get-Value $_ "score" 0) -ge ($score + 8)
+        } | Select-Object -First 1)
+        if ($sameBucketNewChampion.Count -gt 0 -and $holdingGenerations -ge $cycle.min) {
+          $shouldClose = $true
+          $closeReason = "同组新冠军优势明显，调仓释放资金"
+        }
       }
     }
     if ($shouldClose -and $experiment -and $experiment.Count -gt 0) {
@@ -708,6 +896,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
   }
 
   $trades = @(Repair-OverAllocatedTrades $trades $capital $generation $now)
+  $trades = @(Repair-BucketAllocationTrades $trades $State $portfolioPlan $generation $now)
   $openTrades = @($trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" })
   $reservedCapital = 0.0
   foreach ($openTrade in $openTrades) { $reservedCapital += [double](Get-Value $openTrade "amount" 0) }
@@ -715,7 +904,10 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
 
   $championId = [string](Get-Value (Get-Value $State "champion" $null) "id" "")
   $previousChampionId = [string](Get-Value $PreviousChampion "id" "")
-  foreach ($item in $topFive) {
+  foreach ($target in $planItems) {
+    $item = @($State.experiments | Where-Object { [string](Get-Value $_ "id" "") -eq [string](Get-Value $target "experimentId" "") } | Select-Object -First 1)
+    if (!$item -or $item.Count -eq 0) { continue }
+    $item = $item[0]
     if ([string](Get-Value $item "signal" "") -ne "BUY") { continue }
     $position = [double](Get-Value $item "position" 0)
     if ($position -le 0) { continue }
@@ -736,7 +928,17 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
     if ($recentClosed.Count -gt 0) { continue }
     $price = Get-AssetPriceFor $State $item
     if ($price -le 0) { continue }
-    $amount = [math]::Round([math]::Min($capital * $position / 100, $availableCapital), 2)
+    $targetAmount = [double](Get-Value $target "targetAmount" 0)
+    if ($targetAmount -le 0) { $targetAmount = $capital * $position / 100 }
+    $targetBucketName = [string](Get-Value $target "bucketName" (Get-ExperimentBucketName $item))
+    $targetBucket = @($portfolioPlan.buckets | Where-Object { [string](Get-Value $_ "name" "") -eq $targetBucketName } | Select-Object -First 1)
+    $bucketTargetAmount = if ($targetBucket.Count -gt 0) { [double](Get-Value $targetBucket[0] "targetAmount" 0) } else { 0 }
+    $bucketUsedAmount = 0.0
+    foreach ($openTrade in @($trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" -and [string](Get-Value $_ "bucketName" "") -eq $targetBucketName })) {
+      $bucketUsedAmount += [double](Get-Value $openTrade "amount" 0)
+    }
+    $bucketAvailableAmount = if ($bucketTargetAmount -gt 0) { [math]::Max(0, $bucketTargetAmount - $bucketUsedAmount) } else { $availableCapital }
+    $amount = [math]::Round([math]::Min($targetAmount, [math]::Min($availableCapital, $bucketAvailableAmount)), 2)
     if ($amount -lt 1000) { continue }
     $quantity = $amount / $price
     $cycle = Get-StrategyHoldingPeriod $item
@@ -761,6 +963,8 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       floatingProfitPct = 0
       holdingGenerations = 0
       holdingPeriod = $cycle.label
+      bucketName = $targetBucketName
+      bucketRatio = Get-Value $target "bucketRatio" 0
       closeReason = ""
       rank = Get-Value $item "rank" ""
       createdAt = $now
@@ -786,6 +990,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
   }
 
   $State.simulatedTrades = @($trades | Select-Object -First 40)
+  Write-LabMemory $State
   Send-KingTradeAlerts $State $alerts
   return $State
 }
