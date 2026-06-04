@@ -821,7 +821,9 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       $drawdownPct = [double](Get-Value $item "drawdownPct" 0)
       $returnPct = [double](Get-Value $item "returnPct" 0)
       $cycle = Get-StrategyHoldingPeriod $item
-      $bucketName = [string](Get-Value $trade "bucketName" (Get-ExperimentBucketName $item))
+      $computedBucketName = Get-ExperimentBucketName $item
+      $bucketName = [string](Get-Value $trade "bucketName" $computedBucketName)
+      if ($computedBucketName -ne $bucketName) { $bucketName = $computedBucketName }
       $holdingGenerations = [math]::Max(0, $generation - [int](Get-Value $trade "generation" $generation))
       $trade | Add-Member -NotePropertyName holdingPeriod -NotePropertyValue $cycle.label -Force
       $trade | Add-Member -NotePropertyName bucketName -NotePropertyValue $bucketName -Force
