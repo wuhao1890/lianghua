@@ -226,8 +226,12 @@ function Send-KingTradeAlerts([object]$State, [array]$Alerts) {
   $settings = Get-AlertSettings $State
   if (!$settings.emailEnabled -or [string]::IsNullOrWhiteSpace($settings.email)) { return }
   $topFiveText = if ($settings.includeTopFive) { Format-TopFiveText $State } else { "未开启前五名状态附带。" }
+  $ledger = Get-Value $State "tradeAlertLedger" @{}
+  if ($null -eq $ledger -or $ledger -is [array]) { $ledger = @{} }
   foreach ($alert in $Alerts) {
     $actionText = Get-Value $alert "action" ""
+    $alertKey = [string](Get-Value $alert "key" "")
+    if (![string]::IsNullOrWhiteSpace($alertKey) -and $ledger.PSObject.Properties.Name -contains $alertKey) { continue }
     $body = @"
 智能实验室王者策略触发交易动作
 
@@ -238,16 +242,23 @@ function Send-KingTradeAlerts([object]$State, [array]$Alerts) {
 价格：$(Get-Value $alert "price" 0)
 仓位：$(Get-Value $alert "position" 0)%
 模拟金额：$(Get-Value $alert "amount" 0)
+触发原因：$(Get-Value $alert "reason" "策略达到买卖条件")
+周期状态：$(Get-Value $alert "holdingPeriod" "按策略周期继续复盘")
 本代：第 $(Get-Value $State "generation" 0) 代
 时间：$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))
 
 前五名状态：
 $topFiveText
 
-说明：这是系统模拟交易和策略迭代告警，不构成投资建议。
+说明：邮件只提醒买入或卖出时间点；持仓期间系统只统计收益和复盘经验，不重复发送买入提醒。本提醒不构成投资建议。
 "@
-    Send-LabAlertEmail -To $settings.email -Subject "量化实验室王者策略$actionText提醒" -Body $body | Out-Null
+    if (Send-LabAlertEmail -To $settings.email -Subject "量化实验室王者策略$actionText提醒" -Body $body) {
+      if (![string]::IsNullOrWhiteSpace($alertKey)) {
+        $ledger | Add-Member -NotePropertyName $alertKey -NotePropertyValue (Get-Date).ToUniversalTime().ToString("o") -Force
+      }
+    }
   }
+  $State | Add-Member -NotePropertyName tradeAlertLedger -NotePropertyValue $ledger -Force
 }
 
 function Ensure-MysqlSchema {
@@ -535,28 +546,132 @@ function Get-AssetPriceFor([object]$State, [object]$Experiment) {
   return 0
 }
 
+function Get-StrategyHoldingPeriod([object]$Experiment) {
+  $style = [string](Get-Value $Experiment "style" "")
+  $name = [string](Get-Value $Experiment "strategyName" "")
+  $entryRule = [string](Get-Value $Experiment "entryRule" "")
+  $exitRule = [string](Get-Value $Experiment "exitRule" "")
+  $rule = "$name $entryRule $exitRule"
+  if ($style -eq "sentiment" -or $rule -match "新闻|舆情|公告|事件") {
+    return [pscustomobject]@{ min = 1; target = 4; max = 8; label = "事件周期，1到4代跟踪催化，最多8代" }
+  }
+  if ($style -eq "mean-reversion" -or $rule -match "低吸|反弹|短线") {
+    return [pscustomobject]@{ min = 2; target = 6; max = 10; label = "短周期，2到6代重点观察，最多10代" }
+  }
+  if ($style -eq "custom") {
+    return [pscustomobject]@{ min = 2; target = 8; max = 14; label = "自定义周期，2到8代验证，最多14代" }
+  }
+  return [pscustomobject]@{ min = 3; target = 10; max = 18; label = "趋势周期，3到10代持有验证，最多18代" }
+}
+
+function Add-TradeExperience([object]$Experiment, [object]$Trade, [string]$CloseReason) {
+  $profit = [double](Get-Value $Trade "profit" 0)
+  $floatingPct = [double](Get-Value $Trade "floatingProfitPct" 0)
+  $holdingGenerations = [int](Get-Value $Trade "holdingGenerations" 0)
+  $resultText = if ($profit -gt 0) { "盈利" } elseif ($profit -lt 0) { "亏损" } else { "持平" }
+  $summary = "$resultText 经验：持有 $holdingGenerations 代，收益率 $floatingPct%，卖出原因：$CloseReason。"
+  $existing = @((Get-Value $Experiment "tradeLessons" @()))
+  $lessons = @($summary) + $existing | Select-Object -First 5
+  $Experiment | Add-Member -NotePropertyName tradeLessons -NotePropertyValue $lessons -Force
+  $Experiment | Add-Member -NotePropertyName lastTradeResult -NotePropertyValue $summary -Force
+  if ($profit -gt 0) {
+    $Experiment.winRate = [int]([math]::Min(100, [double](Get-Value $Experiment "winRate" 50) + 1))
+    $Experiment.score = [int]([math]::Min(100, [double](Get-Value $Experiment "score" 50) + 1))
+    $Experiment.mutation = "吸收盈利经验：保留本次入场条件，下一代继续验证周期节奏。"
+  } elseif ($profit -lt 0) {
+    $Experiment.winRate = [int]([math]::Max(0, [double](Get-Value $Experiment "winRate" 50) - 1))
+    $Experiment.score = [int]([math]::Max(0, [double](Get-Value $Experiment "score" 50) - 2))
+    $Experiment.mutation = "吸收亏损经验：降低仓位或延后买入确认，下一代收紧卖出风控。"
+  }
+  return $Experiment
+}
+
+function Repair-OverAllocatedTrades([array]$Trades, [double]$Capital, [int]$Generation, [string]$Now) {
+  $openTrades = @($Trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" })
+  $usedCapital = 0.0
+  foreach ($trade in $openTrades) { $usedCapital += [double](Get-Value $trade "amount" 0) }
+  if ($usedCapital -le $Capital) { return $Trades }
+
+  $keptCapital = 0.0
+  $orderedOpenIds = @{}
+  foreach ($trade in @($openTrades | Sort-Object -Property createdAt)) {
+    $tradeId = [string](Get-Value $trade "id" "")
+    $amount = [double](Get-Value $trade "amount" 0)
+    if ($keptCapital + $amount -le $Capital) {
+      $keptCapital += $amount
+      $orderedOpenIds[$tradeId] = $true
+    }
+  }
+
+  foreach ($trade in $Trades) {
+    if ([string](Get-Value $trade "status" "") -ne "持仓中") { continue }
+    $tradeId = [string](Get-Value $trade "id" "")
+    if ($orderedOpenIds.ContainsKey($tradeId)) { continue }
+    $trade | Add-Member -NotePropertyName status -NotePropertyValue "资金校准撤销" -Force
+    $trade | Add-Member -NotePropertyName action -NotePropertyValue "撤销" -Force
+    $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $Now -Force
+    $trade | Add-Member -NotePropertyName closedGeneration -NotePropertyValue $Generation -Force
+    $trade | Add-Member -NotePropertyName closeReason -NotePropertyValue "历史重复买入导致资金超限，系统按有限资金规则撤销该模拟持仓，不发送买卖邮件。" -Force
+  }
+  return $Trades
+}
+
 function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
   $now = (Get-Date).ToUniversalTime().ToString("o")
   $capital = [double](Get-Value $State "capital" 100000)
   $generation = [int](Get-Value $State "generation" 0)
   $topFive = @($State.experiments | Sort-Object -Property score, returnPct -Descending | Select-Object -First 5)
-  $topIds = @{}
-  foreach ($item in $topFive) { $topIds[[string](Get-Value $item "id" "")] = $true }
   $trades = @($State.simulatedTrades)
   $alerts = @()
+  $closedThisRun = @{}
+  $maxOpenPositions = 5
 
   foreach ($trade in $trades) {
     if ([string](Get-Value $trade "status" "") -ne "持仓中") { continue }
     $experimentId = [string](Get-Value $trade "experimentId" "")
     $experiment = @($State.experiments | Where-Object { [string](Get-Value $_ "id" "") -eq $experimentId } | Select-Object -First 1)
     $shouldClose = $false
+    $closeReason = ""
     if (!$experiment -or $experiment.Count -eq 0) {
       $shouldClose = $true
+      $closeReason = "策略已被淘汰"
     } else {
       $item = $experiment[0]
-      $previousId = [string](Get-Value $PreviousChampion "id" "")
-      $previousReturn = [double](Get-Value $PreviousChampion "returnPct" 0)
-      $shouldClose = ([string](Get-Value $item "signal" "") -eq "SELL") -or (!$topIds.ContainsKey($experimentId)) -or ($previousId -eq $experimentId -and [double](Get-Value $item "returnPct" 0) -lt $previousReturn)
+      $price = Get-AssetPriceFor $State $item
+      $buyPrice = [double](Get-Value $trade "buyPrice" 0)
+      $quantity = [double](Get-Value $trade "quantity" 0)
+      $plannedSellPrice = [double](Get-Value $trade "plannedSellPrice" 0)
+      $score = [double](Get-Value $item "score" 0)
+      $drawdownPct = [double](Get-Value $item "drawdownPct" 0)
+      $returnPct = [double](Get-Value $item "returnPct" 0)
+      $cycle = Get-StrategyHoldingPeriod $item
+      $holdingGenerations = [math]::Max(0, $generation - [int](Get-Value $trade "generation" $generation))
+      $trade | Add-Member -NotePropertyName holdingPeriod -NotePropertyValue $cycle.label -Force
+      if ($price -gt 0 -and $buyPrice -gt 0 -and $quantity -gt 0) {
+        $floatingProfit = [math]::Round(($price - $buyPrice) * $quantity, 2)
+        $floatingPct = [math]::Round((($price - $buyPrice) / $buyPrice) * 100, 2)
+        $trade | Add-Member -NotePropertyName currentPrice -NotePropertyValue $price -Force
+        $trade | Add-Member -NotePropertyName floatingProfit -NotePropertyValue $floatingProfit -Force
+        $trade | Add-Member -NotePropertyName floatingProfitPct -NotePropertyValue $floatingPct -Force
+        $trade | Add-Member -NotePropertyName holdingGenerations -NotePropertyValue $holdingGenerations -Force
+        $trade | Add-Member -NotePropertyName lastEvaluatedAt -NotePropertyValue $now -Force
+      }
+      if ([string](Get-Value $item "signal" "") -eq "SELL" -and $holdingGenerations -ge $cycle.min) {
+        $shouldClose = $true
+        $closeReason = "模型触发卖出信号"
+      } elseif ($price -gt 0 -and $plannedSellPrice -gt 0 -and $price -ge $plannedSellPrice) {
+        $shouldClose = $true
+        $closeReason = "达到计划卖出价"
+      } elseif ($holdingGenerations -ge $cycle.target -and $score -lt 55 -and $returnPct -lt 1) {
+        $shouldClose = $true
+        $closeReason = "到达策略周期后综合分转弱"
+      } elseif ($holdingGenerations -ge $cycle.max) {
+        $shouldClose = $true
+        $closeReason = "达到策略最长周期，落袋复盘"
+      } elseif ($drawdownPct -ge 8 -and $holdingGenerations -ge $cycle.min) {
+        $shouldClose = $true
+        $closeReason = "回撤扩大触发风控"
+      }
     }
     if ($shouldClose -and $experiment -and $experiment.Count -gt 0) {
       $item = $experiment[0]
@@ -567,32 +682,64 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
         $trade | Add-Member -NotePropertyName action -NotePropertyValue "卖出" -Force
         $trade | Add-Member -NotePropertyName sellPrice -NotePropertyValue $price -Force
         $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $now -Force
+        $trade | Add-Member -NotePropertyName closedGeneration -NotePropertyValue $generation -Force
         $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round(($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0), 2)) -Force
+        $trade | Add-Member -NotePropertyName closeReason -NotePropertyValue $closeReason -Force
+        $closedAssetCode = [string](Get-Value $trade "assetCode" "")
+        if (![string]::IsNullOrWhiteSpace($closedAssetCode)) { $closedThisRun[$closedAssetCode] = $true }
+        $item = Add-TradeExperience $item $trade $closeReason
         if ($rank -eq "king") {
+          $sellTradeId = [string](Get-Value $trade "id" "")
           $alerts += [pscustomobject]@{
+            key = "SELL-$sellTradeId"
             action = "卖出"
+            assetCode = Get-Value $trade "assetCode" ""
             assetName = Get-Value $item "assetName" ""
             strategyName = Get-Value $item "strategyName" ""
             price = $price
             position = Get-Value $item "position" 0
             amount = Get-Value $trade "amount" 0
+            reason = $closeReason
+            holdingPeriod = Get-Value $trade "holdingPeriod" ""
           }
         }
       }
     }
   }
 
+  $trades = @(Repair-OverAllocatedTrades $trades $capital $generation $now)
+  $openTrades = @($trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" })
+  $reservedCapital = 0.0
+  foreach ($openTrade in $openTrades) { $reservedCapital += [double](Get-Value $openTrade "amount" 0) }
+  $availableCapital = [math]::Max(0, $capital - $reservedCapital)
+
+  $championId = [string](Get-Value (Get-Value $State "champion" $null) "id" "")
+  $previousChampionId = [string](Get-Value $PreviousChampion "id" "")
   foreach ($item in $topFive) {
     if ([string](Get-Value $item "signal" "") -ne "BUY") { continue }
     $position = [double](Get-Value $item "position" 0)
     if ($position -le 0) { continue }
+    $currentOpenCount = @($trades | Where-Object { [string](Get-Value $_ "status" "") -eq "持仓中" }).Count
+    if ($currentOpenCount -ge $maxOpenPositions) { continue }
     $experimentId = [string](Get-Value $item "id" "")
+    $assetCode = [string](Get-Value $item "assetCode" "")
+    if ($closedThisRun.ContainsKey($assetCode)) { continue }
     $openExists = @($trades | Where-Object { [string](Get-Value $_ "experimentId" "") -eq $experimentId -and [string](Get-Value $_ "status" "") -eq "持仓中" })
     if ($openExists.Count -gt 0) { continue }
+    $assetOpenExists = @($trades | Where-Object { [string](Get-Value $_ "assetCode" "") -eq $assetCode -and [string](Get-Value $_ "status" "") -eq "持仓中" })
+    if ($assetOpenExists.Count -gt 0) { continue }
+    $recentClosed = @($trades | Where-Object {
+      [string](Get-Value $_ "assetCode" "") -eq $assetCode -and
+      [string](Get-Value $_ "status" "") -ne "持仓中" -and
+      ($generation - [int](Get-Value $_ "closedGeneration" (Get-Value $_ "generation" 0))) -lt 3
+    })
+    if ($recentClosed.Count -gt 0) { continue }
     $price = Get-AssetPriceFor $State $item
     if ($price -le 0) { continue }
-    $amount = [math]::Round($capital * $position / 100, 2)
+    $amount = [math]::Round([math]::Min($capital * $position / 100, $availableCapital), 2)
+    if ($amount -lt 1000) { continue }
     $quantity = $amount / $price
+    $cycle = Get-StrategyHoldingPeriod $item
     $plannedSellPrice = [math]::Round($price * (1 + [math]::Max([double](Get-Value $item "returnPct" 0), 1.2) / 100), 4)
     $trades = @([pscustomobject]@{
       id = "$(Get-Date -UFormat %s)-$experimentId"
@@ -609,17 +756,31 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       amount = $amount
       quantity = $quantity
       profit = 0
+      currentPrice = $price
+      floatingProfit = 0
+      floatingProfitPct = 0
+      holdingGenerations = 0
+      holdingPeriod = $cycle.label
+      closeReason = ""
       rank = Get-Value $item "rank" ""
       createdAt = $now
+      lastEvaluatedAt = $now
     }) + $trades
-    if ([string](Get-Value $item "rank" "") -eq "king") {
+    $availableCapital = [math]::Max(0, $availableCapital - $amount)
+    $isNewChampionBuy = ([string](Get-Value $item "id" "") -eq $championId) -and ($championId -ne $previousChampionId)
+    if ([string](Get-Value $item "rank" "") -eq "king" -and $isNewChampionBuy) {
+      $buyAssetCode = [string](Get-Value $item "assetCode" "")
       $alerts += [pscustomobject]@{
+        key = "BUY-$buyAssetCode-$generation"
         action = "买入"
+        assetCode = Get-Value $item "assetCode" ""
         assetName = Get-Value $item "assetName" ""
         strategyName = Get-Value $item "strategyName" ""
         price = $price
         position = $position
         amount = $amount
+        reason = "新标的首次进入王者买入条件"
+        holdingPeriod = $cycle.label
       }
     }
   }

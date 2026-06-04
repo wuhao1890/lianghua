@@ -93,6 +93,7 @@
           <div class="wide"><span>买入依据</span><p>{{ zhText(champion.entryRule) }}</p></div>
           <div class="wide"><span>卖出依据</span><p>{{ zhText(champion.exitRule) }}</p></div>
           <div class="wide"><span>收益来源</span><p>{{ tradePlanFor(champion).profitSource }}</p></div>
+          <div class="wide"><span>策略记忆</span><p>{{ strategyMemoryFor(champion) }}</p></div>
         </div>
 
         <el-empty v-else :image-size="72" description="点击自动实验后生成最优策略" />
@@ -121,16 +122,20 @@
       <article class="panel trade-ledger-panel">
         <div class="panel-head">
           <div>
-            <h3>模拟成交流水</h3>
-            <span>模型迭代后自动记录买入、卖出和降级处理。</span>
+            <h3>持仓与成交复盘</h3>
+            <span>买入后按策略周期持有，持续统计浮盈浮亏；只在卖出点提醒。</span>
           </div>
         </div>
         <div class="trade-ledger">
           <div v-for="trade in simulatedTrades.slice(0, 8)" :key="trade.id" class="trade-row">
             <strong>{{ trade.assetName }} · {{ zhText(trade.strategyName) }}</strong>
-            <span>{{ trade.action }} · {{ trade.status }} · {{ formatTime(trade.createdAt) }}</span>
-            <small>买入 {{ formatPrice(trade.buyPrice) }}，{{ trade.sellPrice ? `卖出 ${formatPrice(trade.sellPrice)}` : `计划 ${formatPrice(trade.plannedSellPrice)}` }}</small>
-            <em :class="trade.profit >= 0 ? 'up' : 'down'">{{ formatMoney(trade.profit) }}</em>
+            <span>{{ trade.action }} · {{ trade.status }} · 买入时间 {{ formatTime(trade.createdAt) }}</span>
+            <small>
+              周期 {{ trade.holdingPeriod || '等待周期识别' }} · 已持有 {{ trade.holdingGenerations || 0 }} 代 ·
+              买入 {{ formatPrice(trade.buyPrice) }} · 当前 {{ formatPrice(trade.currentPrice || trade.buyPrice) }} ·
+              {{ trade.sellPrice ? `卖出 ${formatPrice(trade.sellPrice)} · 原因 ${trade.closeReason || '策略复盘'}` : `计划 ${formatPrice(trade.plannedSellPrice)}` }}
+            </small>
+            <em :class="tradeProfitFor(trade) >= 0 ? 'up' : 'down'">{{ formatMoney(tradeProfitFor(trade)) }}</em>
           </div>
         </div>
         <el-empty v-if="!simulatedTrades.length" :image-size="60" description="暂无模拟成交" />
@@ -391,6 +396,9 @@ interface LabExperiment {
   mutation: string
   custom: boolean
   factorScores: Array<{ name: string; score: number; reason: string }>
+  holdingPeriod?: string
+  tradeLessons?: string[]
+  lastTradeResult?: string
 }
 
 interface SimulatedTrade {
@@ -408,6 +416,13 @@ interface SimulatedTrade {
   amount: number
   quantity: number
   profit: number
+  currentPrice?: number
+  floatingProfit?: number
+  floatingProfitPct?: number
+  holdingGenerations?: number
+  holdingPeriod?: string
+  closeReason?: string
+  closedGeneration?: number
   createdAt: string
   closedAt?: string
 }
@@ -1191,8 +1206,9 @@ function tradePlanFor(item: LabExperiment) {
   const price = assetPriceFor(item)
   const amount = capital.value * (item.position / 100)
   const target = price > 0 ? price * (1 + Math.max(item.returnPct, 1.2) / 100) : 0
-  const buyTime = item.signal === 'BUY' ? `第 ${item.generation} 代形成买入` : '暂不买入'
-  const sellTime = item.signal === 'SELL' ? `第 ${item.generation} 代触发卖出` : '达到目标价、综合分低于50或回撤扩大时卖出'
+  const cycle = holdingPeriodFor(item)
+  const buyTime = item.signal === 'BUY' ? `第 ${item.generation} 代形成买入，按${cycle.label}跟踪` : '暂不买入'
+  const sellTime = item.signal === 'SELL' ? `第 ${item.generation} 代触发卖出` : `先持有观察，${cycle.label}，达到目标价、周期转弱或风控触发时卖出`
   const action = item.signal === 'BUY'
     ? `当前操作：用 ${formatMoney(amount)} 模拟买入，参考现价 ${formatPrice(price)}，目标卖价 ${formatPrice(target)}。`
     : item.signal === 'SELL'
@@ -1204,35 +1220,77 @@ function tradePlanFor(item: LabExperiment) {
     buyPrice: price > 0 ? formatPrice(price) : '等待真实报价',
     sellPrice: target > 0 ? formatPrice(target) : '等待真实报价',
     action,
-    profitSource: `本代收益来自真实报价 ${formatPrice(price)}、建议仓位 ${item.position}%、策略模拟收益 ${formatPercent(item.returnPct)} 和回撤 ${formatPercent(item.drawdownPct)} 的综合测算。`
+    profitSource: `本代收益来自真实报价 ${formatPrice(price)}、建议仓位 ${item.position}%、策略模拟收益 ${formatPercent(item.returnPct)}、回撤 ${formatPercent(item.drawdownPct)} 和该标的历史交易记忆的综合测算。`
   }
 }
 
 function executeSimulatedTrades(previousChampion: LabExperiment | null) {
   const now = new Date().toISOString()
-  const bestIds = new Set(topFiveStrategies.value.map((item) => item.id))
+  const maxOpenPositions = 5
 
   for (const trade of simulatedTrades.value) {
     if (trade.status !== '持仓中') continue
     const item = experiments.value.find((target) => target.id === trade.experimentId)
     const price = item ? assetPriceFor(item) : 0
-    const shouldClose = !item || item.signal === 'SELL' || !bestIds.has(trade.experimentId) || (previousChampion?.id === item.id && item.returnPct < previousChampion.returnPct)
+    let shouldClose = !item
+    let closeReason = item ? '' : '策略已被淘汰'
+    if (item && price > 0) {
+      const cycle = holdingPeriodFor(item)
+      const holdingGenerations = Math.max(0, generation.value - trade.generation)
+      const floatingProfit = Number(((price - trade.buyPrice) * trade.quantity).toFixed(2))
+      const floatingProfitPct = trade.buyPrice > 0 ? Number((((price - trade.buyPrice) / trade.buyPrice) * 100).toFixed(2)) : 0
+      trade.currentPrice = price
+      trade.floatingProfit = floatingProfit
+      trade.floatingProfitPct = floatingProfitPct
+      trade.holdingGenerations = holdingGenerations
+      trade.holdingPeriod = cycle.label
+      if (item.signal === 'SELL' && holdingGenerations >= cycle.min) {
+        shouldClose = true
+        closeReason = '模型触发卖出信号'
+      } else if (trade.plannedSellPrice > 0 && price >= trade.plannedSellPrice) {
+        shouldClose = true
+        closeReason = '达到计划卖出价'
+      } else if (holdingGenerations >= cycle.target && item.score < 55 && item.returnPct < 1) {
+        shouldClose = true
+        closeReason = '到达策略周期后综合分转弱'
+      } else if (holdingGenerations >= cycle.max) {
+        shouldClose = true
+        closeReason = '达到策略最长周期，落袋复盘'
+      } else if (item.drawdownPct >= 8 && holdingGenerations >= cycle.min) {
+        shouldClose = true
+        closeReason = '回撤扩大触发风控'
+      }
+    }
     if (shouldClose && price > 0) {
       trade.status = item ? '已卖出' : '已淘汰卖出'
       trade.action = '卖出'
       trade.sellPrice = price
       trade.closedAt = now
+      trade.closedGeneration = generation.value
       trade.profit = Number(((price - trade.buyPrice) * trade.quantity).toFixed(2))
+      trade.closeReason = closeReason
+      if (item) applyTradeExperience(item, trade, closeReason)
     }
   }
 
+  repairOverAllocatedTrades(now)
+  let availableCapital = Math.max(0, capital.value - simulatedTrades.value
+    .filter((trade) => trade.status === '持仓中')
+    .reduce((sum, trade) => sum + Number(trade.amount || 0), 0))
+
   for (const item of topFiveStrategies.value) {
     if (item.signal !== 'BUY' || item.position <= 0) continue
+    const openCount = simulatedTrades.value.filter((trade) => trade.status === '持仓中').length
+    if (openCount >= maxOpenPositions) continue
     if (simulatedTrades.value.some((trade) => trade.experimentId === item.id && trade.status === '持仓中')) continue
+    if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status === '持仓中')) continue
+    if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status !== '持仓中' && generation.value - (trade.closedGeneration || trade.generation) < 3)) continue
     const price = assetPriceFor(item)
     if (price <= 0) continue
-    const amount = capital.value * (item.position / 100)
+    const amount = Math.min(capital.value * (item.position / 100), availableCapital)
+    if (amount < 1000) continue
     const quantity = amount / price
+    const cycle = holdingPeriodFor(item)
     simulatedTrades.value.unshift({
       id: `${Date.now()}-${item.id}`,
       experimentId: item.id,
@@ -1248,10 +1306,88 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       amount,
       quantity,
       profit: 0,
+      currentPrice: price,
+      floatingProfit: 0,
+      floatingProfitPct: 0,
+      holdingGenerations: 0,
+      holdingPeriod: cycle.label,
+      closeReason: '',
       createdAt: now
     })
+    availableCapital = Math.max(0, availableCapital - amount)
   }
   simulatedTrades.value = simulatedTrades.value.slice(0, 40)
+}
+
+function repairOverAllocatedTrades(now: string) {
+  const openTrades = simulatedTrades.value
+    .filter((trade) => trade.status === '持仓中')
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+  const usedCapital = openTrades.reduce((sum, trade) => sum + Number(trade.amount || 0), 0)
+  if (usedCapital <= capital.value) return
+
+  let keptCapital = 0
+  const keepIds = new Set<string>()
+  for (const trade of openTrades) {
+    const amount = Number(trade.amount || 0)
+    if (keptCapital + amount <= capital.value) {
+      keptCapital += amount
+      keepIds.add(trade.id)
+    }
+  }
+  for (const trade of openTrades) {
+    if (keepIds.has(trade.id)) continue
+    trade.status = '资金校准撤销'
+    trade.action = '撤销'
+    trade.closedAt = now
+    trade.closedGeneration = generation.value
+    trade.closeReason = '历史重复买入导致资金超限，系统按有限资金规则撤销该模拟持仓，不发送买卖邮件。'
+  }
+}
+
+function holdingPeriodFor(item: LabExperiment) {
+  const text = `${item.strategyName} ${item.entryRule} ${item.exitRule}`
+  if (item.style === 'mean-reversion' || /低吸|回撤|反弹|短线/.test(text)) {
+    return { min: 2, target: 6, max: 10, label: '短周期2到6代重点观察，最多10代' }
+  }
+  if (item.style === 'sentiment' || /新闻|舆情|公告|事件/.test(text)) {
+    return { min: 1, target: 4, max: 8, label: '事件周期1到4代跟踪催化，最多8代' }
+  }
+  if (item.style === 'custom') {
+    return { min: 2, target: 8, max: 14, label: '自定义周期2到8代验证，最多14代' }
+  }
+  return { min: 3, target: 10, max: 18, label: '趋势周期3到10代持有验证，最多18代' }
+}
+
+function applyTradeExperience(item: LabExperiment, trade: SimulatedTrade, closeReason: string) {
+  const profit = Number(trade.profit || 0)
+  const floatingPct = Number(trade.floatingProfitPct || 0)
+  const holdingGenerations = Number(trade.holdingGenerations || 0)
+  const resultText = profit > 0 ? '盈利' : profit < 0 ? '亏损' : '持平'
+  const summary = `${resultText}经验：持有${holdingGenerations}代，收益率${formatPercent(floatingPct)}，卖出原因：${closeReason}。`
+  item.tradeLessons = [summary, ...(item.tradeLessons || [])].slice(0, 5)
+  item.lastTradeResult = summary
+  if (profit > 0) {
+    item.winRate = Math.min(100, item.winRate + 1)
+    item.score = Math.min(100, item.score + 1)
+    item.mutation = '吸收盈利经验：保留本次入场条件，下一代继续验证周期节奏。'
+  } else if (profit < 0) {
+    item.winRate = Math.max(0, item.winRate - 1)
+    item.score = Math.max(0, item.score - 2)
+    item.mutation = '吸收亏损经验：降低仓位或延后买入确认，下一代收紧卖出风控。'
+  }
+}
+
+function tradeProfitFor(trade: SimulatedTrade) {
+  if (trade.status === '持仓中') return Number(trade.floatingProfit || 0)
+  return Number(trade.profit || 0)
+}
+
+function strategyMemoryFor(item: LabExperiment) {
+  const lessons = item.tradeLessons || []
+  if (lessons.length) return lessons.map(zhText).join(' ')
+  const cycle = holdingPeriodFor(item)
+  return `${item.assetName} 正在建立标的记忆：当前采用${cycle.label}，结合历史曲线、实时行情、新闻舆情、资金流和技术面持续学习。`
 }
 
 function zhText(value?: string) {
