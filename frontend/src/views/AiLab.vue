@@ -47,6 +47,63 @@
       </article>
     </section>
 
+    <section class="decision-grid">
+      <article class="panel mood-panel">
+        <div class="panel-head">
+          <div>
+            <h3>当前结论</h3>
+            <span>只看现在该怎么做，不看流水账。</span>
+          </div>
+          <el-tag :type="moodInfo.type" effect="dark">{{ moodInfo.name }}</el-tag>
+        </div>
+        <div class="decision-main">
+          <strong>{{ currentDecision.title }}</strong>
+          <p>{{ currentDecision.detail }}</p>
+        </div>
+        <div class="decision-points">
+          <span v-for="item in currentDecision.points" :key="item">{{ item }}</span>
+        </div>
+      </article>
+
+      <article class="panel learning-panel">
+        <div class="panel-head">
+          <div>
+            <h3>模型学到了什么</h3>
+            <span>第 {{ generation }} 代 · 当前只展示结论和变化。</span>
+          </div>
+        </div>
+        <div class="learning-list">
+          <div v-for="item in learningInsights" :key="item.title" class="learning-item">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.detail }}</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel research-panel">
+      <div class="panel-head">
+        <div>
+          <h3>研究控制台</h3>
+          <span>指定标的或调整学习方向，避免无脑迭代。</span>
+        </div>
+        <el-button type="primary" plain @click="applyResearchFocus">应用研究方向</el-button>
+      </div>
+      <div class="research-form">
+        <el-input v-model="researchForm.target" placeholder="指定股票/基金/金属代码或名称，如 600519、贵州茅台、110022" />
+        <el-input
+          v-model="researchForm.direction"
+          type="textarea"
+          :rows="3"
+          placeholder="告诉模型重点研究什么：长期持有、短线波段、新闻催化、资金流、黑名单观察、某个指标等。"
+        />
+      </div>
+      <div class="blacklist" v-if="blacklistItems.length">
+        <strong>风险黑名单</strong>
+        <span v-for="item in blacklistItems" :key="item.code">{{ item.name }}：{{ item.reason }}</span>
+      </div>
+    </section>
+
     <section class="rank-track">
       <div v-for="rank in ranks" :key="rank.key" class="rank-step" :class="{ active: champion?.rank === rank.key }">
         <span :class="'rank-dot rank-' + rank.key"></span>
@@ -78,8 +135,8 @@
           <div class="bucket-items">
             <div v-for="item in bucket.items" :key="item.experimentId" class="bucket-item">
               <div>
-                <strong>{{ item.assetName }}</strong>
-                <span>{{ zhText(item.strategyName) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · {{ item.score }}分</span>
+                <strong class="linkish" @click="goPortfolioItem(item)">{{ item.assetName }} {{ item.assetCode }}</strong>
+                <span>{{ portfolioStrategyName(item) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · {{ item.score }}分</span>
               </div>
               <em>{{ formatMoney(item.targetAmount) }}</em>
             </div>
@@ -101,7 +158,7 @@
 
         <div v-if="champion" class="champion">
           <div>
-            <h4>{{ zhText(champion.strategyName) }}</h4>
+            <h4>{{ displayStrategyName(champion) }}</h4>
             <p>{{ zhText(champion.reason) }}</p>
           </div>
           <div class="champion-score">
@@ -144,8 +201,8 @@
           <article v-for="(item, index) in topFiveStrategies" :key="item.id" class="top-five-item" @click="goAssetDetail(item)">
             <b>{{ index + 1 }}</b>
             <div>
-              <strong>{{ item.assetName }} · {{ zhText(item.strategyName) }}</strong>
-              <span>{{ assetTypeText(item.assetType) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · 仓位 {{ item.position }}%</span>
+              <strong>{{ item.assetName }} · {{ displayStrategyName(item) }}</strong>
+              <span>{{ item.assetCode }} · {{ assetTypeText(item.assetType) }} · {{ rankName(item.rank) }} · {{ signalText(item.signal) }} · 仓位 {{ item.position }}%</span>
               <small>{{ tradePlanFor(item).action }}</small>
             </div>
             <em :class="item.returnPct >= 0 ? 'up' : 'down'">{{ formatPercent(item.returnPct) }}</em>
@@ -162,11 +219,11 @@
         </div>
         <div class="trade-ledger">
           <div v-for="trade in simulatedTrades.slice(0, 8)" :key="trade.id" class="trade-row">
-            <strong>{{ trade.assetName }} · {{ zhText(trade.strategyName) }}</strong>
-            <span>{{ trade.bucketName || '未分组' }} · {{ trade.action }} · {{ trade.status }} · 投入 {{ formatMoney(trade.amount) }} · 买入时间 {{ formatTime(trade.createdAt) }}</span>
+            <strong class="linkish" @click="goTradeItem(trade)">{{ trade.assetName }} {{ trade.assetCode }} · {{ tradeStrategyName(trade) }}</strong>
+            <span>{{ trade.assetCode }} · {{ trade.bucketName || '未分组' }} · {{ trade.action }} · {{ trade.status }} · 投入 {{ formatMoney(trade.amount) }} · 买入时间 {{ formatTime(trade.createdAt) }}</span>
             <small>
               周期 {{ trade.holdingPeriod || '等待周期识别' }} · 已持有 {{ trade.holdingGenerations || 0 }} 代 ·
-              买入 {{ formatPrice(trade.buyPrice) }} · 当前 {{ formatPrice(trade.currentPrice || trade.buyPrice) }} ·
+              买入 {{ formatPrice(trade.buyPrice) }} · 当前 {{ formatPrice(trade.currentPrice || trade.buyPrice) }} · 手续费意识 {{ formatMoney(trade.fee || 5) }} ·
               {{ trade.sellPrice ? `卖出 ${formatPrice(trade.sellPrice)} · 原因 ${trade.closeReason || '策略复盘'}` : `计划 ${formatPrice(trade.plannedSellPrice)}` }}
             </small>
             <em :class="tradeProfitFor(trade) >= 0 ? 'up' : 'down'">{{ formatMoney(tradeProfitFor(trade)) }}</em>
@@ -178,15 +235,15 @@
       <article class="panel">
         <div class="panel-head">
           <div>
-            <h3>后台定时迭代记录</h3>
-            <span>{{ iterationHistory.length }} 条 · 每 {{ intervalMinutes }} 分钟同步</span>
+            <h3>最近同步摘要</h3>
+            <span>{{ iterationHistory.length }} 条 · 每 {{ intervalMinutes }} 分钟学习一次，只展示最近3条</span>
           </div>
         </div>
         <div class="log-list iteration-list">
-          <div v-for="item in iterationHistory" :key="item.id" class="log-item">
+          <div v-for="item in iterationHistory.slice(0, 3)" :key="item.id" class="log-item">
             <strong>第 {{ item.generation }} 代 · {{ item.champion?.assetName || '暂无冠军' }}</strong>
             <span>
-                  {{ zhText(item.champion?.strategyName || '等待策略') }}
+                  {{ strategyNameFromText(item.champion?.strategyName || '等待策略') }}
               · 收益 {{ formatPercent(item.champion?.returnPct || 0) }}
               · 回撤 {{ formatPercent(item.champion?.drawdownPct || 0) }}
               · {{ formatTime(item.createdAt) }}
@@ -309,8 +366,8 @@
             <article class="experiment-card clickable" :class="'card-' + item.rank" @click="goAssetDetail(item)">
               <div class="experiment-top">
                 <div>
-                  <strong>{{ zhText(item.strategyName) }}</strong>
-                  <span>{{ item.assetName }} · {{ assetTypeText(item.assetType) }} · {{ item.generation }} 代</span>
+                  <strong>{{ displayStrategyName(item) }}</strong>
+                  <span>{{ item.assetName }} {{ item.assetCode }} · {{ assetTypeText(item.assetType) }} · {{ item.generation }} 代</span>
                 </div>
                 <el-tag :type="rankTag(item.rank)">{{ rankName(item.rank) }}</el-tag>
               </div>
@@ -330,7 +387,7 @@
             </article>
           </template>
           <div class="score-detail">
-            <h4>{{ item.assetName }} · {{ zhText(item.strategyName) }}</h4>
+            <h4>{{ item.assetName }} · {{ displayStrategyName(item) }}</h4>
             <div v-for="score in item.factorScores" :key="score.name" class="score-detail-row">
               <div>
                 <strong>{{ zhText(score.name) }}</strong>
@@ -449,6 +506,7 @@ interface SimulatedTrade {
   sellPrice: number
   amount: number
   quantity: number
+  fee?: number
   profit: number
   currentPrice?: number
   floatingProfit?: number
@@ -498,6 +556,19 @@ interface CustomStrategy {
   rule: string
 }
 
+interface ResearchFocus {
+  target: string
+  direction: string
+  updatedAt?: string
+}
+
+interface BlacklistItem {
+  code: string
+  name: string
+  reason: string
+  createdAt: string
+}
+
 const rounds = ref(6)
 const capital = ref(100000)
 const intervalMinutes = ref(5)
@@ -513,11 +584,18 @@ const iterationHistory = ref<any[]>([])
 const simulatedTrades = ref<SimulatedTrade[]>([])
 const customStrategies = ref<CustomStrategy[]>([])
 const portfolioPlan = ref<PortfolioPlan | null>(null)
+const researchFocus = ref<ResearchFocus | null>(null)
+const blacklistItems = ref<BlacklistItem[]>([])
 const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
 
 const customForm = reactive({
   title: '',
   content: ''
+})
+
+const researchForm = reactive({
+  target: '',
+  direction: ''
 })
 
 const router = useRouter()
@@ -536,6 +614,41 @@ const topFiveStrategies = computed(() => sortedExperiments.value.slice(0, 5))
 const champion = computed(() => sortedExperiments.value[0] || null)
 const activePortfolioPlan = computed(() => portfolioPlan.value?.buckets?.length ? portfolioPlan.value : buildPortfolioPlan())
 const bestReturn = computed(() => champion.value?.returnPct || 0)
+const moodInfo = computed(() => {
+  const openTrades = simulatedTrades.value.filter((trade) => trade.status === '持仓中')
+  const totalFloating = openTrades.reduce((sum, trade) => sum + Number(trade.floatingProfit || 0), 0)
+  const weakCount = sortedExperiments.value.filter((item) => item.score < 42 || item.drawdownPct >= 10).length
+  const strongCount = sortedExperiments.value.filter((item) => item.score >= 75 && item.returnPct > 0).length
+  if (weakCount >= 5 || totalFloating < -capital.value * 0.03) return { name: '完全失控', type: 'danger' as const, reason: '亏损和回撤连续扩大，进入恐慌风控，允许拉黑标的。' }
+  if (weakCount >= 2 || totalFloating < 0) return { name: '有点失控', type: 'warning' as const, reason: '局部策略低于预期，先降仓观察，不急着换手。' }
+  if (strongCount >= 3) return { name: '尽在掌控', type: 'success' as const, reason: '多组策略符合预期，继续按周期持有验证。' }
+  return { name: '基本符合预期', type: 'primary' as const, reason: '组合仍在学习，暂不频繁交易。' }
+})
+const currentDecision = computed(() => {
+  const buys = activePortfolioPlan.value.buckets.flatMap((bucket) => bucket.items.map((item) => ({ ...item, bucketName: bucket.name }))).filter((item) => item.signal === 'BUY')
+  const holds = activePortfolioPlan.value.buckets.flatMap((bucket) => bucket.items.map((item) => ({ ...item, bucketName: bucket.name }))).filter((item) => item.signal !== 'BUY')
+  const openCount = simulatedTrades.value.filter((trade) => trade.status === '持仓中').length
+  return {
+    title: buys.length ? `当前优先方案：${buys.map((item) => `${item.bucketName}买入${item.assetName}`).slice(0, 3).join('，')}` : '当前没有新的买入动作，保持观察',
+    detail: `${moodInfo.value.reason} 现在持仓 ${openCount} 个，交易周期未到前不频繁卖出；新方案只有在旧方案持续亏损、分组超额或分数差距明显时才替换。`,
+    points: [
+      `研究方向：${researchFocus.value?.target || '全市场组合筛选'} ${researchFocus.value?.direction || '收益优先，同时记录风险教训'}`,
+      `交易成本：每次买卖按5元成本意识处理，避免5分钟内无意义换手`,
+      holds.length ? `观察候选：${holds.slice(0, 2).map((item) => item.assetName).join('、')}` : '候选均已达到买入条件'
+    ]
+  }
+})
+const learningInsights = computed(() => {
+  const lessons = sortedExperiments.value.flatMap((item) => (item.tradeLessons || []).map((lesson) => ({ asset: item.assetName, lesson }))).slice(0, 4)
+  const bucketText = activePortfolioPlan.value.buckets.map((bucket) => `${bucket.name}${bucket.ratio}%`).join('、')
+  const insights = [
+    { title: '组合结构', detail: `模型当前按 ${bucketText} 分配资金，先做组合前景判断，再决定是否买卖。` },
+    { title: '交易节奏', detail: '短线、事件、趋势、自定义策略都有最小持有周期；定时迭代只学习，不再每代发交易邮件。' },
+    { title: '当前情绪', detail: `${moodInfo.value.name}：${moodInfo.value.reason}` }
+  ]
+  if (researchFocus.value?.target) insights.unshift({ title: '指定研究', detail: `正在优先研究 ${researchFocus.value.target}：${researchFocus.value.direction || '等待补充方向'}` })
+  return [...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 6)
+})
 const simulatedPosition = computed(() => champion.value ? capital.value * (champion.value.position / 100) : 0)
 const historicalProfit = computed(() => champion.value ? simulatedPosition.value * (champion.value.returnPct / 100) : 0)
 const realtimeProfit = computed(() => champion.value ? simulatedPosition.value * ((champion.value.returnPct * 0.38) / 100) : 0)
@@ -625,6 +738,10 @@ function applyLabState(state: any) {
   evolutionLog.value = Array.isArray(state.evolutionLog) ? state.evolutionLog : []
   simulatedTrades.value = Array.isArray(state.simulatedTrades) ? state.simulatedTrades : []
   portfolioPlan.value = normalizePortfolioPlan(state.portfolioPlan)
+  researchFocus.value = state.researchFocus || null
+  blacklistItems.value = Array.isArray(state.blacklistItems) ? state.blacklistItems : []
+  researchForm.target = researchFocus.value?.target || ''
+  researchForm.direction = researchFocus.value?.direction || ''
   if (Array.isArray(state.customStrategies)) {
     customStrategies.value = state.customStrategies
     saveCustomStrategies()
@@ -646,10 +763,12 @@ function loadLabStateLocal() {
 }
 
 function hydrateExperiment(item: LabExperiment): LabExperiment {
-  return {
+  const normalized = {
     ...item,
     factorScores: Array.isArray(item.factorScores) ? item.factorScores : factorScoresFor(item)
   }
+  normalized.strategyName = displayStrategyName(normalized)
+  return normalized
 }
 
 function asArray<T = any>(value: T | T[] | null | undefined): T[] {
@@ -698,6 +817,8 @@ async function persistLabState() {
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
     portfolioPlan: activePortfolioPlan.value,
+    researchFocus: researchFocus.value,
+    blacklistItems: blacklistItems.value,
     champion: champion.value,
     lastRunAt: new Date().toISOString()
   }
@@ -717,6 +838,8 @@ async function persistIteration() {
     evolutionLog: evolutionLog.value,
     simulatedTrades: simulatedTrades.value,
     portfolioPlan: activePortfolioPlan.value,
+    researchFocus: researchFocus.value,
+    blacklistItems: blacklistItems.value,
     champion: champion.value
   }
   saveLabStateLocal({
@@ -1246,6 +1369,97 @@ function goAssetDetailByAsset(asset: LabAsset) {
   }
 }
 
+function goPortfolioItem(item: PortfolioItem) {
+  const target = experiments.value.find((experiment) => experiment.id === item.experimentId || experiment.assetCode === item.assetCode)
+  if (target) {
+    goAssetDetail(target)
+    return
+  }
+  router.push(`/stock/${item.assetCode}`)
+}
+
+function goTradeItem(trade: SimulatedTrade) {
+  const target = experiments.value.find((experiment) => experiment.id === trade.experimentId || experiment.assetCode === trade.assetCode)
+  if (target) {
+    goAssetDetail(target)
+    return
+  }
+  router.push(`/stock/${trade.assetCode}`)
+}
+
+function customTitleFromRule(text?: string) {
+  const match = String(text || '').match(/智能标准化自定义策略「([^」]+)」/)
+  return match?.[1] || ''
+}
+
+function strategyNameFromText(text?: string) {
+  const title = customTitleFromRule(text)
+  if (title) return title
+  const value = String(text || '')
+  if (value === 'Custom Strategy' || value === '自定义策略') return '自定义策略'
+  return zhText(value)
+}
+
+function displayStrategyName(item?: Partial<LabExperiment> | null) {
+  if (!item) return ''
+  const title = customTitleFromRule(item.entryRule || item.reason || item.mutation || '')
+  if (title) return title
+  const fromSaved = customStrategies.value.find((strategy) => item.id?.startsWith(strategy.id))
+  if (fromSaved) return fromSaved.name
+  return strategyNameFromText(item.strategyName)
+}
+
+function portfolioStrategyName(item: PortfolioItem) {
+  const experiment = experiments.value.find((target) => target.id === item.experimentId || target.assetCode === item.assetCode)
+  return experiment ? displayStrategyName(experiment) : strategyNameFromText(item.strategyName)
+}
+
+function tradeStrategyName(trade: SimulatedTrade) {
+  const experiment = experiments.value.find((target) => target.id === trade.experimentId || target.assetCode === trade.assetCode)
+  return experiment ? displayStrategyName(experiment) : strategyNameFromText(trade.strategyName)
+}
+
+async function applyResearchFocus() {
+  const target = researchForm.target.trim()
+  const direction = researchForm.direction.trim()
+  if (!target && !direction) {
+    ElMessage.warning('请填写要研究的标的或学习方向')
+    return
+  }
+  researchFocus.value = {
+    target,
+    direction,
+    updatedAt: new Date().toISOString()
+  }
+  if (target) {
+    for (const item of experiments.value) {
+      const matched = item.assetCode.includes(target) || item.assetName.includes(target)
+      if (!matched) continue
+      item.mutation = `用户指定重点研究：${direction || '继续深挖该标的的历史规律、新闻舆情、资金流和技术面'}。`
+      item.factorScores = factorScoresFor(item)
+    }
+  }
+  await persistLabState()
+  ElMessage.success('研究方向已保存，会参与后续每次迭代')
+}
+
+function refreshBlacklist() {
+  const existing = new Set(blacklistItems.value.map((item) => item.code))
+  const additions = sortedExperiments.value
+    .filter((item) => !existing.has(item.assetCode))
+    .filter((item) => item.score <= 38 || (item.drawdownPct >= 12 && item.returnPct < 0))
+    .slice(0, 3)
+    .map((item) => ({
+      code: item.assetCode,
+      name: item.assetName,
+      reason: `综合分${item.score}，回撤${formatPercent(item.drawdownPct)}，收益${formatPercent(item.returnPct)}，模型情绪进入恐慌/失控观察，暂停主动加仓并记录失败经验。`,
+      createdAt: new Date().toISOString()
+    }))
+  if (additions.length) {
+    blacklistItems.value = [...additions, ...blacklistItems.value].slice(0, 12)
+  }
+}
+
 function inferCustomStyle(text: string) {
   if (/(回撤|低吸|超跌|反弹|支撑|便宜|跌下来)/.test(text)) return 'mean-reversion'
   if (/(新闻|公告|政策|事件|财报|利好|利空|舆情|大V)/.test(text)) return 'event-driven'
@@ -1398,7 +1612,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
     if (item && price > 0) {
       const cycle = holdingPeriodFor(item)
       const holdingGenerations = Math.max(0, generation.value - trade.generation)
-      const floatingProfit = Number(((price - trade.buyPrice) * trade.quantity).toFixed(2))
+      const floatingProfit = Number(((price - trade.buyPrice) * trade.quantity - Number(trade.fee || 5)).toFixed(2))
       const floatingProfitPct = trade.buyPrice > 0 ? Number((((price - trade.buyPrice) / trade.buyPrice) * 100).toFixed(2)) : 0
       trade.currentPrice = price
       trade.floatingProfit = floatingProfit
@@ -1410,7 +1624,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       if (item.signal === 'SELL' && holdingGenerations >= cycle.min) {
         shouldClose = true
         closeReason = '模型触发卖出信号'
-      } else if (trade.plannedSellPrice > 0 && price >= trade.plannedSellPrice) {
+      } else if (trade.plannedSellPrice > 0 && price >= trade.plannedSellPrice && holdingGenerations >= cycle.min) {
         shouldClose = true
         closeReason = '达到计划卖出价'
       } else if (holdingGenerations >= cycle.target && item.score < 55 && item.returnPct < 1) {
@@ -1433,7 +1647,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       trade.sellPrice = price
       trade.closedAt = now
       trade.closedGeneration = generation.value
-      trade.profit = Number(((price - trade.buyPrice) * trade.quantity).toFixed(2))
+      trade.profit = Number(((price - trade.buyPrice) * trade.quantity - Number(trade.fee || 5) * 2).toFixed(2))
       trade.closeReason = closeReason
       if (item) applyTradeExperience(item, trade, closeReason)
     }
@@ -1452,7 +1666,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
     if (openCount >= maxOpenPositions) continue
     if (simulatedTrades.value.some((trade) => trade.experimentId === item.id && trade.status === '持仓中')) continue
     if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status === '持仓中')) continue
-    if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status !== '持仓中' && generation.value - (trade.closedGeneration || trade.generation) < 3)) continue
+    if (simulatedTrades.value.some((trade) => trade.assetCode === item.assetCode && trade.status !== '持仓中' && generation.value - (trade.closedGeneration || trade.generation) < 24)) continue
     const price = assetPriceFor(item)
     if (price <= 0) continue
     const bucket = plan.buckets.find((itemBucket) => itemBucket.name === target.bucketName)
@@ -1478,6 +1692,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
       sellPrice: 0,
       amount,
       quantity,
+      fee: 5,
       profit: 0,
       currentPrice: price,
       floatingProfit: 0,
@@ -1492,6 +1707,7 @@ function executeSimulatedTrades(previousChampion: LabExperiment | null) {
     availableCapital = Math.max(0, availableCapital - amount)
   }
   simulatedTrades.value = simulatedTrades.value.slice(0, 40)
+  refreshBlacklist()
 }
 
 function repairOverAllocatedTrades(now: string) {
@@ -1523,15 +1739,15 @@ function repairOverAllocatedTrades(now: string) {
 function holdingPeriodFor(item: LabExperiment) {
   const text = `${item.strategyName} ${item.entryRule} ${item.exitRule}`
   if (item.style === 'mean-reversion' || /低吸|回撤|反弹|短线/.test(text)) {
-    return { min: 2, target: 6, max: 10, label: '短周期2到6代重点观察，最多10代' }
+    return { min: 36, target: 144, max: 432, label: '低吸周期，至少36代观察，重点144代，最多432代' }
   }
   if (item.style === 'sentiment' || /新闻|舆情|公告|事件/.test(text)) {
-    return { min: 1, target: 4, max: 8, label: '事件周期1到4代跟踪催化，最多8代' }
+    return { min: 24, target: 96, max: 288, label: '事件周期，至少24代观察，重点96代，最多288代' }
   }
   if (item.style === 'custom') {
-    return { min: 2, target: 8, max: 14, label: '自定义周期2到8代验证，最多14代' }
+    return { min: 48, target: 192, max: 576, label: '自定义周期，至少48代验证，重点192代，最多576代' }
   }
-  return { min: 3, target: 10, max: 18, label: '趋势周期3到10代持有验证，最多18代' }
+  return { min: 72, target: 288, max: 864, label: '趋势周期，至少72代持有验证，重点288代，最多864代' }
 }
 
 function applyTradeExperience(item: LabExperiment, trade: SimulatedTrade, closeReason: string) {
@@ -2269,8 +2485,76 @@ function styleText(style?: string) {
   }
 }
 
-.up { color: #1f9d66 !important; }
-.down { color: #d84d4d !important; }
+.decision-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.decision-main {
+  display: grid;
+  gap: 8px;
+
+  strong {
+    color: #1f2d3d;
+    font-size: 18px;
+  }
+
+  p {
+    margin: 0;
+    color: #4b5563;
+    line-height: 1.7;
+  }
+}
+
+.decision-points,
+.learning-list,
+.blacklist {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.decision-points span,
+.learning-item,
+.blacklist span {
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #f6f8fb;
+  color: #4b5563;
+  line-height: 1.55;
+}
+
+.learning-item strong,
+.learning-item span {
+  display: block;
+}
+
+.learning-item strong {
+  margin-bottom: 4px;
+  color: #1f2d3d;
+}
+
+.research-form {
+  display: grid;
+  gap: 10px;
+}
+
+.blacklist strong {
+  color: #d84d4d;
+}
+
+.linkish {
+  cursor: pointer;
+  color: #2b6cb0;
+}
+
+.linkish:hover {
+  text-decoration: underline;
+}
+
+.up { color: #d84d4d !important; }
+.down { color: #1f9d66 !important; }
 
 @media (max-width: 1200px) {
   .asset-grid,
@@ -2283,6 +2567,7 @@ function styleText(style?: string) {
   .main-grid,
   .bottom-grid,
   .portfolio-grid,
+  .decision-grid,
   .kpi-grid {
     grid-template-columns: 1fr;
   }

@@ -456,6 +456,14 @@ const FUND_CODES = [
   "001875", "002594", "519674", "270002", "260108", "000311", "001938", "005827"
 ];
 
+function classifyFund(name = "") {
+  if (/货币|现金|添利|宝/.test(name)) return "货币型";
+  if (/债|纯债|信用/.test(name)) return "债券型";
+  if (/指数|ETF|联接|LOF|300|500|100|50/.test(name)) return "指数型";
+  if (/股票|行业|消费|医药|新能源|科技|半导体|军工/.test(name)) return "股票型";
+  return "混合型";
+}
+
 async function fetchFundRealtime(code: string) {
   const response = await fetch(`https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`, {
     headers: {
@@ -476,20 +484,37 @@ async function fetchFundRealtime(code: string) {
     accNav: Number(json.dwjz || nav),
     navDate: json.gztime || json.jzrq || "",
     changePercent: Number(json.gszzl || 0),
-    fundType: "公开基金",
+    fundType: classifyFund(json.name || ""),
     source: "eastmoney-fundgz"
   };
 }
 
-async function fetchFundList(page = 1, pageSize = 20) {
+async function fetchFundList(page = 1, pageSize = 20, keyword = "", fundType = "") {
   const rows = (await Promise.all(FUND_CODES.map((code) => fetchFundRealtime(code)))).filter(Boolean) as AnyRecord[];
+  const filtered = rows.filter((fund) => {
+    const hitKeyword = !keyword || String(fund.code).includes(keyword) || String(fund.name).includes(keyword);
+    const hitType = !fundType || String(fund.fundType).includes(fundType);
+    return hitKeyword && hitType;
+  });
   const start = (page - 1) * pageSize;
   return {
-    list: rows.slice(start, start + pageSize),
-    total: rows.length,
+    list: filtered.slice(start, start + pageSize),
+    total: filtered.length,
     page,
     pageSize
   };
+}
+
+async function fetchFundNavPoints(code: string) {
+  const fund = await fetchFundRealtime(code);
+  if (!fund) return [];
+  return [{
+    date: String(fund.navDate || new Date().toISOString()).slice(0, 10),
+    nav: fund.nav,
+    accNav: fund.accNav,
+    changePercent: fund.changePercent,
+    source: fund.source
+  }];
 }
 
 async function fetchSectorRows() {
@@ -614,6 +639,116 @@ async function labIterations(userId: number) {
   const own = await store.get(`ai-lab-iterations:${userId}`, { type: "json" }) || [];
   if (own.length || userId === 1) return own;
   return await store.get("ai-lab-iterations:1", { type: "json" }) || [];
+}
+
+async function labTrades(userId: number) {
+  const state = await labState(userId);
+  return Array.isArray(state?.simulatedTrades) ? state.simulatedTrades : [];
+}
+
+function labOrdersFromTrades(trades: AnyRecord[]) {
+  const orders: AnyRecord[] = [];
+  for (const trade of trades) {
+    const quantity = Number(trade.quantity || 0);
+    const buyPrice = Number(trade.buyPrice || 0);
+    const sellPrice = Number(trade.sellPrice || 0);
+    orders.push({
+      id: `${trade.id}-BUY`,
+      stockCode: trade.assetCode,
+      stockName: trade.assetName,
+      direction: "BUY",
+      price: buyPrice,
+      quantity,
+      amount: Number(trade.amount || buyPrice * quantity),
+      fee: Number(trade.fee || 5),
+      status: "FILLED",
+      strategyName: trade.strategyName,
+      source: "AI实验室模拟",
+      createdAt: trade.createdAt,
+      updatedAt: trade.createdAt
+    });
+    if (String(trade.status || "") !== "持仓中" && sellPrice > 0) {
+      orders.push({
+        id: `${trade.id}-SELL`,
+        stockCode: trade.assetCode,
+        stockName: trade.assetName,
+        direction: "SELL",
+        price: sellPrice,
+        quantity,
+        amount: Number((sellPrice * quantity).toFixed(2)),
+        fee: Number(trade.fee || 5),
+        profit: Number(trade.profit || 0),
+        closeReason: trade.closeReason || "",
+        status: "FILLED",
+        strategyName: trade.strategyName,
+        source: "AI实验室模拟",
+        createdAt: trade.closedAt || trade.createdAt,
+        updatedAt: trade.closedAt || trade.createdAt
+      });
+    }
+  }
+  return orders.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+function labPositionsFromTrades(trades: AnyRecord[]) {
+  return trades
+    .filter((trade) => String(trade.status || "") === "持仓中")
+    .map((trade) => {
+      const quantity = Number(trade.quantity || 0);
+      const costPrice = Number(trade.buyPrice || 0);
+      const currentPrice = Number(trade.currentPrice || trade.buyPrice || 0);
+      const marketValue = Number((currentPrice * quantity).toFixed(2));
+      const costAmount = Number(trade.amount || costPrice * quantity);
+      const profit = Number((marketValue - costAmount - Number(trade.fee || 5)).toFixed(2));
+      const profitPercent = costAmount > 0 ? Number((profit / costAmount * 100).toFixed(2)) : 0;
+      return {
+        stockCode: trade.assetCode,
+        stockName: trade.assetName,
+        quantity,
+        availableQuantity: quantity,
+        costPrice,
+        currentPrice,
+        marketValue,
+        profit,
+        profitPercent,
+        strategyName: trade.strategyName,
+        bucketName: trade.bucketName || "",
+        source: "AI实验室模拟",
+        createdAt: trade.createdAt
+      };
+    });
+}
+
+function labProfitAnalysisFromTrades(trades: AnyRecord[]) {
+  const closed = trades.filter((trade) => String(trade.status || "") !== "持仓中" && Number.isFinite(Number(trade.profit)));
+  const profits = closed.map((trade) => Number(trade.profit || 0));
+  const wins = profits.filter((value) => value > 0);
+  const losses = profits.filter((value) => value < 0);
+  const totalProfit = Number(wins.reduce((sum, value) => sum + value, 0).toFixed(2));
+  const totalLoss = Number(losses.reduce((sum, value) => sum + value, 0).toFixed(2));
+  return {
+    totalTradeCount: closed.length,
+    winCount: wins.length,
+    loseCount: losses.length,
+    winRate: closed.length ? Number((wins.length / closed.length * 100).toFixed(2)) : 0,
+    totalProfit,
+    totalLoss,
+    avgProfit: wins.length ? Number((totalProfit / wins.length).toFixed(2)) : 0,
+    avgLoss: losses.length ? Number((totalLoss / losses.length).toFixed(2)) : 0,
+    profitLossRatio: totalLoss ? Number(Math.abs(totalProfit / totalLoss).toFixed(2)) : 0,
+    maxDrawdown: Math.abs(Math.min(0, ...profits)),
+    sharpeRatio: 0
+  };
+}
+
+function labProfitRecordsFromTrades(trades: AnyRecord[]) {
+  const map = new Map<string, number>();
+  for (const trade of trades) {
+    if (String(trade.status || "") === "持仓中") continue;
+    const date = String(trade.closedAt || trade.createdAt || new Date().toISOString()).slice(0, 10);
+    map.set(date, Number(((map.get(date) || 0) + Number(trade.profit || 0)).toFixed(2)));
+  }
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, profit]) => ({ date, profit, source: "AI实验室模拟" }));
 }
 
 async function markDirtyUser(userId: number) {
@@ -1063,16 +1198,18 @@ function signalForV2(stock: AnyRecord): AnyRecord {
 
 async function account(userId: number) {
   const user = await blobStore().get(`user-id:${userId}`, { type: "json" }) || await ensureUser();
-  const positions = await blobStore().get(`positions:${user.id}`, { type: "json" }) || [];
+  const savedPositions = await blobStore().get(`positions:${user.id}`, { type: "json" }) || [];
+  const positions = savedPositions.length ? savedPositions : labPositionsFromTrades(await labTrades(userId));
   const marketValue = positions.reduce((sum: number, item: AnyRecord) => sum + (item.marketValue || 0), 0);
+  const totalProfit = positions.reduce((sum: number, item: AnyRecord) => sum + Number(item.profit || 0), 0);
   return {
     totalAssets: Number(user.availableCash || 0) + marketValue,
     availableCash: Number(user.availableCash || 0),
     marketValue,
-    totalProfit: 0,
-    totalProfitPercent: 0,
-    todayProfit: 0,
-    todayProfitPercent: 0,
+    totalProfit,
+    totalProfitPercent: marketValue > 0 ? Number((totalProfit / marketValue * 100).toFixed(2)) : 0,
+    todayProfit: totalProfit,
+    todayProfitPercent: marketValue > 0 ? Number((totalProfit / marketValue * 100).toFixed(2)) : 0,
     positionCount: positions.length
   };
 }
@@ -1456,8 +1593,17 @@ async function route(req: Request) {
   }
 
   if (method === "GET" && path === "/trade/account") return send(await account(userIdFrom(req)));
-  if (method === "GET" && path === "/trade/positions") return send(await blobStore().get(`positions:${userIdFrom(req)}`, { type: "json" }) || []);
-  if (method === "GET" && path === "/trade/orders") return send({ list: await blobStore().get(`orders:${userIdFrom(req)}`, { type: "json" }) || [], total: 0 });
+  if (method === "GET" && path === "/trade/positions") {
+    const userId = userIdFrom(req);
+    const saved = await blobStore().get(`positions:${userId}`, { type: "json" }) || [];
+    return send(saved.length ? saved : labPositionsFromTrades(await labTrades(userId)));
+  }
+  if (method === "GET" && path === "/trade/orders") {
+    const userId = userIdFrom(req);
+    const saved = await blobStore().get(`orders:${userId}`, { type: "json" }) || [];
+    const list = [...saved, ...labOrdersFromTrades(await labTrades(userId))];
+    return send({ list, total: list.length });
+  }
   if (method === "POST" && (path === "/trade/buy" || path === "/trade/sell")) {
     const userId = userIdFrom(req);
     const data = await jsonBody(req);
@@ -1467,14 +1613,16 @@ async function route(req: Request) {
     return send(null, "交易已记录");
   }
   if (method === "DELETE" && path.startsWith("/trade/order/")) return send(null, "订单已处理");
-  if (method === "GET" && path === "/trade/profit-analysis") return send({ totalTradeCount: 0, winCount: 0, loseCount: 0, winRate: 0, totalProfit: 0, totalLoss: 0, avgProfit: 0, avgLoss: 0, profitLossRatio: 0, maxDrawdown: 0, sharpeRatio: 0 });
-  if (method === "GET" && path === "/trade/profit-records") return send([]);
+  if (method === "GET" && path === "/trade/profit-analysis") return send(labProfitAnalysisFromTrades(await labTrades(userIdFrom(req))));
+  if (method === "GET" && path === "/trade/profit-records") return send(labProfitRecordsFromTrades(await labTrades(userIdFrom(req))));
 
   if (method === "GET" && path === "/stock/fund/list") {
     const page = Number(url.searchParams.get("page") || 1);
     const pageSize = Number(url.searchParams.get("pageSize") || 20);
-    return send(await fetchFundList(page, pageSize));
+    return send(await fetchFundList(page, pageSize, url.searchParams.get("keyword") || "", url.searchParams.get("fundType") || ""));
   }
+  const fundNav = path.match(/^\/stock\/fund\/([^/]+)\/nav$/);
+  if (method === "GET" && fundNav) return send(await fetchFundNavPoints(fundNav[1]));
   const fundDetail = path.match(/^\/stock\/fund\/([^/]+)$/);
   if (method === "GET" && fundDetail) {
     const fund = await fetchFundRealtime(fundDetail[1]);

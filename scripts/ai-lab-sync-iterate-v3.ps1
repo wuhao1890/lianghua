@@ -222,6 +222,8 @@ function Send-LabAlertEmail([string]$To, [string]$Subject, [string]$Body) {
 }
 
 function Send-KingTradeAlerts([object]$State, [array]$Alerts) {
+  Write-Log "定时迭代不发送交易邮件；邮件只保留给用户真实操作或人工确认的买入卖出。"
+  return
   if (!$Alerts -or $Alerts.Count -eq 0) { return }
   $settings = Get-AlertSettings $State
   if (!$settings.emailEnabled -or [string]::IsNullOrWhiteSpace($settings.email)) { return }
@@ -383,6 +385,8 @@ function Normalize-LabState([object]$State) {
       updatedAt = Get-Value $State "updatedAt" $null
       customStrategies = @()
       simulatedTrades = @()
+      researchFocus = Get-Value $State "researchFocus" $null
+      blacklistItems = @(Get-Value $State "blacklistItems" @())
       alertSettings = Get-Value $State "alertSettings" $null
     })
   }
@@ -391,6 +395,8 @@ function Normalize-LabState([object]$State) {
   if ($null -eq $State.evolutionLog) { $State | Add-Member -NotePropertyName evolutionLog -NotePropertyValue @() -Force }
   if ($null -eq $State.customStrategies) { $State | Add-Member -NotePropertyName customStrategies -NotePropertyValue @() -Force }
   if ($null -eq $State.simulatedTrades) { $State | Add-Member -NotePropertyName simulatedTrades -NotePropertyValue @() -Force }
+  if ($null -eq $State.researchFocus) { $State | Add-Member -NotePropertyName researchFocus -NotePropertyValue $null -Force }
+  if ($null -eq $State.blacklistItems) { $State | Add-Member -NotePropertyName blacklistItems -NotePropertyValue @() -Force }
   if ($null -eq $State.alertSettings) { $State | Add-Member -NotePropertyName alertSettings -NotePropertyValue $null -Force }
   if ($champion -ne (Get-Value $State "champion" $null)) { $State.champion = $champion }
   return Convert-LabObjectText $State
@@ -554,15 +560,15 @@ function Get-StrategyHoldingPeriod([object]$Experiment) {
   $exitRule = [string](Get-Value $Experiment "exitRule" "")
   $rule = "$name $entryRule $exitRule"
   if ($style -eq "sentiment" -or $rule -match "新闻|舆情|公告|事件") {
-    return [pscustomobject]@{ min = 1; target = 4; max = 8; label = "事件周期，1到4代跟踪催化，最多8代" }
+    return [pscustomobject]@{ min = 24; target = 96; max = 288; label = "事件周期，至少24代观察，重点96代，最多288代" }
   }
   if ($style -eq "mean-reversion" -or $rule -match "低吸|反弹|短线") {
-    return [pscustomobject]@{ min = 2; target = 6; max = 10; label = "短周期，2到6代重点观察，最多10代" }
+    return [pscustomobject]@{ min = 36; target = 144; max = 432; label = "短线波段，至少36代观察，重点144代，最多432代" }
   }
   if ($style -eq "custom") {
-    return [pscustomobject]@{ min = 2; target = 8; max = 14; label = "自定义周期，2到8代验证，最多14代" }
+    return [pscustomobject]@{ min = 48; target = 192; max = 576; label = "自定义周期，至少48代验证，重点192代，最多576代" }
   }
-  return [pscustomobject]@{ min = 3; target = 10; max = 18; label = "趋势周期，3到10代持有验证，最多18代" }
+  return [pscustomobject]@{ min = 72; target = 288; max = 864; label = "趋势周期，至少72代持有，重点288代，最多864代" }
 }
 
 function Add-TradeExperience([object]$Experiment, [object]$Trade, [string]$CloseReason) {
@@ -828,7 +834,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       $trade | Add-Member -NotePropertyName holdingPeriod -NotePropertyValue $cycle.label -Force
       $trade | Add-Member -NotePropertyName bucketName -NotePropertyValue $bucketName -Force
       if ($price -gt 0 -and $buyPrice -gt 0 -and $quantity -gt 0) {
-        $floatingProfit = [math]::Round(($price - $buyPrice) * $quantity, 2)
+        $floatingProfit = [math]::Round((($price - $buyPrice) * $quantity) - [double](Get-Value $trade "fee" 5), 2)
         $floatingPct = [math]::Round((($price - $buyPrice) / $buyPrice) * 100, 2)
         $trade | Add-Member -NotePropertyName currentPrice -NotePropertyValue $price -Force
         $trade | Add-Member -NotePropertyName floatingProfit -NotePropertyValue $floatingProfit -Force
@@ -839,7 +845,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       if ([string](Get-Value $item "signal" "") -eq "SELL" -and $holdingGenerations -ge $cycle.min) {
         $shouldClose = $true
         $closeReason = "模型触发卖出信号"
-      } elseif ($price -gt 0 -and $plannedSellPrice -gt 0 -and $price -ge $plannedSellPrice) {
+      } elseif ($price -gt 0 -and $plannedSellPrice -gt 0 -and $price -ge $plannedSellPrice -and $holdingGenerations -ge $cycle.min) {
         $shouldClose = $true
         $closeReason = "达到计划卖出价"
       } elseif ($holdingGenerations -ge $cycle.target -and $score -lt 55 -and $returnPct -lt 1) {
@@ -873,7 +879,8 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
         $trade | Add-Member -NotePropertyName sellPrice -NotePropertyValue $price -Force
         $trade | Add-Member -NotePropertyName closedAt -NotePropertyValue $now -Force
         $trade | Add-Member -NotePropertyName closedGeneration -NotePropertyValue $generation -Force
-        $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round(($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0), 2)) -Force
+        $tradeFee = [double](Get-Value $trade "fee" 5)
+        $trade | Add-Member -NotePropertyName profit -NotePropertyValue ([math]::Round((($price - [double](Get-Value $trade "buyPrice" 0)) * [double](Get-Value $trade "quantity" 0)) - ($tradeFee * 2), 2)) -Force
         $trade | Add-Member -NotePropertyName closeReason -NotePropertyValue $closeReason -Force
         $closedAssetCode = [string](Get-Value $trade "assetCode" "")
         if (![string]::IsNullOrWhiteSpace($closedAssetCode)) { $closedThisRun[$closedAssetCode] = $true }
@@ -925,7 +932,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
     $recentClosed = @($trades | Where-Object {
       [string](Get-Value $_ "assetCode" "") -eq $assetCode -and
       [string](Get-Value $_ "status" "") -ne "持仓中" -and
-      ($generation - [int](Get-Value $_ "closedGeneration" (Get-Value $_ "generation" 0))) -lt 3
+      ($generation - [int](Get-Value $_ "closedGeneration" (Get-Value $_ "generation" 0))) -lt 24
     })
     if ($recentClosed.Count -gt 0) { continue }
     $price = Get-AssetPriceFor $State $item
@@ -959,6 +966,7 @@ function Invoke-SimulatedTrades([object]$State, [object]$PreviousChampion) {
       sellPrice = 0
       amount = $amount
       quantity = $quantity
+      fee = 5
       profit = 0
       currentPrice = $price
       floatingProfit = 0

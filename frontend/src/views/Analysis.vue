@@ -20,7 +20,7 @@
           </div>
           <div class="stat-info">
             <div class="stat-label">胜率</div>
-            <div class="stat-value">{{ analysis?.winRate ? (analysis.winRate * 100).toFixed(1) + '%' : '0%' }}</div>
+            <div class="stat-value">{{ analysis?.winRate ? analysis.winRate.toFixed(1) + '%' : '0%' }}</div>
           </div>
         </div>
       </el-col>
@@ -110,7 +110,7 @@
                 <span class="text-success">{{ formatMoney(analysis?.avgLoss) }}</span>
               </el-descriptions-item>
               <el-descriptions-item label="最大回撤">
-                <span class="text-danger">{{ analysis?.maxDrawdown ? (analysis.maxDrawdown * 100).toFixed(2) + '%' : '-' }}</span>
+                <span class="text-success">{{ analysis?.maxDrawdown ? formatMoney(analysis.maxDrawdown) : '-' }}</span>
               </el-descriptions-item>
               <el-descriptions-item label="夏普比率">{{ analysis?.sharpeRatio?.toFixed(2) || '-' }}</el-descriptions-item>
               <el-descriptions-item label="总收益率">
