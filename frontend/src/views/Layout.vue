@@ -1,7 +1,7 @@
 <template>
   <el-container class="layout-container">
     <el-header class="layout-header">
-      <div class="brand" @click="router.push('/dashboard')">
+      <div class="brand" @click="router.push('/home')">
         <el-icon :size="26"><TrendCharts /></el-icon>
         <span>量化交易</span>
       </div>
@@ -24,8 +24,7 @@
             <el-icon><TrendCharts /></el-icon>
             <span>股票</span>
           </template>
-          <el-menu-item index="/market">股票总览</el-menu-item>
-          <el-menu-item index="/a-stocks">A 股</el-menu-item>
+          <el-menu-item index="/a-stocks">A股</el-menu-item>
           <el-menu-item index="/us-stocks">美股</el-menu-item>
         </el-sub-menu>
 
@@ -43,10 +42,16 @@
           <template #title>新闻</template>
         </el-menu-item>
 
-        <el-menu-item index="/ai-lab">
-          <el-icon><Monitor /></el-icon>
-          <template #title>智能实验室</template>
-        </el-menu-item>
+        <el-sub-menu index="ai-lab-group">
+          <template #title>
+            <el-icon><Monitor /></el-icon>
+            <span>智能实验室</span>
+          </template>
+          <el-menu-item index="/ai-lab">实验总览</el-menu-item>
+          <el-menu-item index="/ai-lab/growth">成长记录</el-menu-item>
+          <el-menu-item index="/ai-lab/research">研究控制</el-menu-item>
+          <el-menu-item index="/ai-lab/portfolio">组合方案</el-menu-item>
+        </el-sub-menu>
 
         <el-sub-menu index="trade-center">
           <template #title>
@@ -171,12 +176,14 @@ const stockPaths = ['/market', '/a-stocks', '/us-stocks']
 const assetPaths = ['/gold', '/funds']
 const tradePaths = ['/trade', '/position', '/history', '/analysis']
 const userPaths = ['/dashboard', '/recharge', '/alert-settings', '/ai-agent', '/admin/recharge']
+const aiLabPaths = ['/ai-lab', '/ai-lab/growth', '/ai-lab/research', '/ai-lab/portfolio']
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/stock/')) return '/market'
   if (route.path.startsWith('/fund/')) return '/funds'
   if (stockPaths.includes(route.path)) return route.path
   if (assetPaths.includes(route.path)) return route.path
+  if (aiLabPaths.includes(route.path)) return route.path
   if (tradePaths.includes(route.path)) return route.path
   if (userPaths.includes(route.path)) return route.path
   return route.path

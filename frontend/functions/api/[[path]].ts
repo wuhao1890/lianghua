@@ -65,6 +65,13 @@ const SECTOR_GROUPS: Array<{ sectorCode: string; sectorName: string; codes: stri
   { sectorCode: "manufacture", sectorName: "高端制造", codes: ["sh600031", "sh600150", "sh600760", "sz000333", "sz000651"] }
 ];
 
+function filterAStocksByBoard(board = "") {
+  if (board === "chinext") return A_STOCKS.filter((code) => /^sz300/.test(code));
+  if (board === "star") return A_STOCKS.filter((code) => /^sh688/.test(code));
+  if (board === "main") return A_STOCKS.filter((code) => /^sh60/.test(code) || /^sz00/.test(code));
+  return A_STOCKS;
+}
+
 const BULLISH_WORDS = ["增持", "买入", "上涨", "增长", "盈利", "突破", "利好", "回购", "中标", "分红", "创新高", "扩张", "净利润", "翻身仗", "拉升", "洗出去"];
 const BEARISH_WORDS = ["减持", "卖出", "下跌", "亏损", "处罚", "风险", "诉讼", "退市", "暴跌", "利空", "问询", "监管", "下降", "磨顶", "破9", "阴跌", "套人", "后悔", "跌停", "水下", "脑壳痛"];
 
@@ -656,6 +663,7 @@ function labOrdersFromTrades(trades: AnyRecord[]) {
       id: `${trade.id}-BUY`,
       stockCode: trade.assetCode,
       stockName: trade.assetName,
+      assetType: String(trade.assetCode || "").startsWith("hf_") ? "gold" : FUND_CODES.includes(String(trade.assetCode || "")) ? "fund" : "stock",
       direction: "BUY",
       price: buyPrice,
       quantity,
@@ -672,6 +680,7 @@ function labOrdersFromTrades(trades: AnyRecord[]) {
         id: `${trade.id}-SELL`,
         stockCode: trade.assetCode,
         stockName: trade.assetName,
+        assetType: String(trade.assetCode || "").startsWith("hf_") ? "gold" : FUND_CODES.includes(String(trade.assetCode || "")) ? "fund" : "stock",
         direction: "SELL",
         price: sellPrice,
         quantity,
@@ -704,6 +713,7 @@ function labPositionsFromTrades(trades: AnyRecord[]) {
       return {
         stockCode: trade.assetCode,
         stockName: trade.assetName,
+        assetType: String(trade.assetCode || "").startsWith("hf_") ? "gold" : FUND_CODES.includes(String(trade.assetCode || "")) ? "fund" : "stock",
         quantity,
         availableQuantity: quantity,
         costPrice,
@@ -1407,7 +1417,8 @@ async function route(req: Request) {
   if (method === "GET" && path === "/stock/sina/a-stocks") {
     const page = Number(url.searchParams.get("page") || 1);
     const pageSize = Number(url.searchParams.get("pageSize") || 20);
-    return Response.json({ code: 200, message: "成功", data: await fetchSina(A_STOCKS.slice((page - 1) * pageSize, page * pageSize)), total: A_STOCKS.length });
+    const pool = filterAStocksByBoard(url.searchParams.get("board") || "");
+    return Response.json({ code: 200, message: "成功", data: await fetchSina(pool.slice((page - 1) * pageSize, page * pageSize)), total: pool.length });
   }
 
   if (method === "GET" && path === "/stock/sina/us-stocks") {

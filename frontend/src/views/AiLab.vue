@@ -47,7 +47,14 @@
       </article>
     </section>
 
-    <section class="decision-grid">
+    <section class="lab-view-tabs">
+      <el-button :type="labView === 'overview' ? 'primary' : ''" @click="router.push('/ai-lab')">实验总览</el-button>
+      <el-button :type="labView === 'growth' ? 'primary' : ''" @click="router.push('/ai-lab/growth')">成长记录</el-button>
+      <el-button :type="labView === 'research' ? 'primary' : ''" @click="router.push('/ai-lab/research')">研究控制</el-button>
+      <el-button :type="labView === 'portfolio' ? 'primary' : ''" @click="router.push('/ai-lab/portfolio')">组合方案</el-button>
+    </section>
+
+    <section v-if="showOverview || showGrowth" class="decision-grid">
       <article class="panel mood-panel">
         <div class="panel-head">
           <div>
@@ -81,7 +88,7 @@
       </article>
     </section>
 
-    <section class="panel research-panel">
+    <section v-if="showResearch || showGrowth" class="panel research-panel">
       <div class="panel-head">
         <div>
           <h3>研究控制台</h3>
@@ -104,7 +111,7 @@
       </div>
     </section>
 
-    <section class="rank-track">
+    <section v-if="showOverview || showGrowth" class="rank-track">
       <div v-for="rank in ranks" :key="rank.key" class="rank-step" :class="{ active: champion?.rank === rank.key }">
         <span :class="'rank-dot rank-' + rank.key"></span>
         <strong>{{ rank.name }}</strong>
@@ -112,7 +119,7 @@
       </div>
     </section>
 
-    <section class="panel portfolio-panel">
+    <section v-if="showOverview || showPortfolio" class="panel portfolio-panel">
       <div class="panel-head">
         <div>
           <h3>组合资金方案</h3>
@@ -147,7 +154,7 @@
     </section>
 
     <section class="main-grid">
-      <article class="panel champion-panel">
+      <article v-if="showOverview || showPortfolio" class="panel champion-panel">
         <div class="panel-head">
           <div>
             <h3>当前最优策略</h3>
@@ -190,7 +197,7 @@
         <el-empty v-else :image-size="72" description="点击自动实验后生成最优策略" />
       </article>
 
-      <article class="panel top-five-panel">
+      <article v-if="showOverview || showPortfolio" class="panel top-five-panel">
         <div class="panel-head">
           <div>
             <h3>前五最优组合</h3>
@@ -210,7 +217,7 @@
         </div>
       </article>
 
-      <article class="panel trade-ledger-panel">
+      <article v-if="showOverview || showPortfolio" class="panel trade-ledger-panel">
         <div class="panel-head">
           <div>
             <h3>持仓与成交复盘</h3>
@@ -232,7 +239,7 @@
         <el-empty v-if="!simulatedTrades.length" :image-size="60" description="暂无模拟成交" />
       </article>
 
-      <article class="panel">
+      <article v-if="showGrowth" class="panel">
         <div class="panel-head">
           <div>
             <h3>最近同步摘要</h3>
@@ -253,7 +260,7 @@
         <el-empty v-if="!iterationHistory.length" :image-size="60" description="暂无后台迭代记录" />
       </article>
 
-      <article class="panel">
+      <article v-if="showResearch" class="panel">
         <div class="panel-head">
           <div>
             <h3>自定义策略</h3>
@@ -293,7 +300,7 @@
       </article>
     </section>
 
-    <section class="panel">
+    <section v-if="showOverview || showResearch" class="panel">
       <div class="panel-head">
         <div>
           <h3>智能自动选标的</h3>
@@ -337,7 +344,31 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section v-if="showGrowth" class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>标的长期档案</h3>
+          <span>让模型记住每个标的的脾气、周期、风险和下一步动作。</span>
+        </div>
+      </div>
+      <div class="archive-grid">
+        <article v-for="item in targetArchives" :key="item.code" class="archive-card" @click="goArchiveDetail(item)">
+          <div class="archive-head">
+            <strong>{{ item.name }} {{ item.code }}</strong>
+            <el-tag size="small" :type="item.moodType">{{ item.mood }}</el-tag>
+          </div>
+          <p>{{ item.profile }}</p>
+          <div class="archive-scores">
+            <span>技术 {{ item.techScore }}分</span>
+            <span>舆情 {{ item.sentimentScore }}分</span>
+            <span>风险 {{ item.riskScore }}分</span>
+          </div>
+          <small>{{ item.nextAction }}</small>
+        </article>
+      </div>
+    </section>
+
+    <section v-if="showGrowth || showOverview" class="panel">
       <div class="panel-head">
         <div>
           <h3>策略收益排位赛</h3>
@@ -400,7 +431,7 @@
       </div>
     </section>
 
-    <section class="bottom-grid">
+    <section v-if="showOverview || showGrowth" class="bottom-grid">
       <article class="panel">
         <div class="panel-head">
           <div>
@@ -437,7 +468,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Delete, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { analyzeStock, getAiLabIterations, getAiLabState, saveAiLabIteration, saveAiLabState } from '@/api/ai'
@@ -599,6 +630,7 @@ const researchForm = reactive({
 })
 
 const router = useRouter()
+const route = useRoute()
 
 const ranks = [
   { key: 'bronze', name: '青铜', range: '亏损或低效' },
@@ -612,6 +644,16 @@ const sortedAssets = computed(() => [...assets.value].sort((a, b) => b.aiScore -
 const sortedExperiments = computed(() => [...experiments.value].sort((a, b) => b.score - a.score))
 const topFiveStrategies = computed(() => sortedExperiments.value.slice(0, 5))
 const champion = computed(() => sortedExperiments.value[0] || null)
+const labView = computed(() => {
+  if (route.path.endsWith('/growth')) return 'growth'
+  if (route.path.endsWith('/research')) return 'research'
+  if (route.path.endsWith('/portfolio')) return 'portfolio'
+  return 'overview'
+})
+const showOverview = computed(() => labView.value === 'overview')
+const showGrowth = computed(() => labView.value === 'growth')
+const showResearch = computed(() => labView.value === 'research')
+const showPortfolio = computed(() => labView.value === 'portfolio')
 const activePortfolioPlan = computed(() => portfolioPlan.value?.buckets?.length ? portfolioPlan.value : buildPortfolioPlan())
 const bestReturn = computed(() => champion.value?.returnPct || 0)
 const moodInfo = computed(() => {
@@ -649,6 +691,30 @@ const learningInsights = computed(() => {
   if (researchFocus.value?.target) insights.unshift({ title: '指定研究', detail: `正在优先研究 ${researchFocus.value.target}：${researchFocus.value.direction || '等待补充方向'}` })
   return [...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 6)
 })
+const targetArchives = computed(() => sortedAssets.value.slice(0, 12).map((asset) => {
+  const related = sortedExperiments.value.filter((item) => item.assetCode === asset.code)
+  const best = related[0]
+  const openTrade = simulatedTrades.value.find((trade) => trade.assetCode === asset.code && trade.status === '持仓中')
+  const riskScore = safeScore(100 - Math.abs(asset.changePct) * 8 - (best?.drawdownPct || 0) * 3)
+  const mood = riskScore < 45 ? '完全失控' : riskScore < 60 ? '有点失控' : (best?.score || asset.aiScore) >= 75 ? '尽在掌控' : '基本符合预期'
+  const moodType = mood === '完全失控' ? 'danger' : mood === '有点失控' ? 'warning' : mood === '尽在掌控' ? 'success' : 'primary'
+  return {
+    code: asset.code,
+    name: asset.name,
+    type: asset.type,
+    mood,
+    moodType,
+    techScore: asset.techScore,
+    sentimentScore: asset.sentimentScore,
+    riskScore,
+    profile: `${asset.name} 当前涨跌 ${formatPercent(asset.changePct)}，技术分 ${asset.techScore}，舆情分 ${asset.sentimentScore}。${best ? `最适配策略是「${displayStrategyName(best)}」，综合分 ${best.score}，回撤 ${formatPercent(best.drawdownPct)}。` : '正在建立长期档案。'}`,
+    nextAction: openTrade
+      ? `已持仓，按${openTrade.holdingPeriod || '策略周期'}继续观察，未到卖出条件不重复买入。`
+      : best?.signal === 'BUY'
+        ? `满足候选买入条件，等待组合资金比例和同组冠军比较后执行。`
+        : `暂不买入，继续收集新闻、舆情、技术和历史周期证据。`
+  }
+}))
 const simulatedPosition = computed(() => champion.value ? capital.value * (champion.value.position / 100) : 0)
 const historicalProfit = computed(() => champion.value ? simulatedPosition.value * (champion.value.returnPct / 100) : 0)
 const realtimeProfit = computed(() => champion.value ? simulatedPosition.value * ((champion.value.returnPct * 0.38) / 100) : 0)
@@ -1387,6 +1453,16 @@ function goTradeItem(trade: SimulatedTrade) {
   router.push(`/stock/${trade.assetCode}`)
 }
 
+function goArchiveDetail(item: { code: string; type: AssetType }) {
+  if (item.type === 'fund') {
+    router.push(`/fund/${item.code}`)
+  } else if (item.type === 'gold') {
+    router.push(`/gold?code=${encodeURIComponent(item.code)}`)
+  } else {
+    router.push(`/stock/${item.code}`)
+  }
+}
+
 function customTitleFromRule(text?: string) {
   const match = String(text || '').match(/智能标准化自定义策略「([^」]+)」/)
   return match?.[1] || ''
@@ -1912,6 +1988,16 @@ function styleText(style?: string) {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.lab-view-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .control-label {
@@ -2544,6 +2630,54 @@ function styleText(style?: string) {
   color: #d84d4d;
 }
 
+.archive-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.archive-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fbfcfe;
+  cursor: pointer;
+
+  p {
+    margin: 0;
+    color: #4b5563;
+    line-height: 1.6;
+  }
+
+  small {
+    color: #606266;
+    line-height: 1.5;
+  }
+}
+
+.archive-head,
+.archive-scores {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.archive-head strong {
+  color: #1f2d3d;
+}
+
+.archive-scores span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #4b5563;
+  font-size: 12px;
+}
+
 .linkish {
   cursor: pointer;
   color: #2b6cb0;
@@ -2558,6 +2692,7 @@ function styleText(style?: string) {
 
 @media (max-width: 1200px) {
   .asset-grid,
+  .archive-grid,
   .experiment-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

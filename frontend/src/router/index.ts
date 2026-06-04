@@ -83,6 +83,24 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '智能实验室', icon: 'Monitor' }
       },
       {
+        path: 'ai-lab/growth',
+        name: 'AiLabGrowth',
+        component: () => import('@/views/AiLab.vue'),
+        meta: { title: '实验室成长', icon: 'Monitor' }
+      },
+      {
+        path: 'ai-lab/research',
+        name: 'AiLabResearch',
+        component: () => import('@/views/AiLab.vue'),
+        meta: { title: '实验室研究', icon: 'Monitor' }
+      },
+      {
+        path: 'ai-lab/portfolio',
+        name: 'AiLabPortfolio',
+        component: () => import('@/views/AiLab.vue'),
+        meta: { title: '实验室组合', icon: 'Monitor' }
+      },
+      {
         path: 'stock/:code',
         name: 'StockDetail',
         component: () => import('@/views/StockDetail.vue'),

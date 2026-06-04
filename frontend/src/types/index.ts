@@ -102,6 +102,7 @@ export interface Position {
   userId: number
   stockCode: string
   stockName: string
+  assetType?: 'stock' | 'fund' | 'gold'
   market: 'A' | 'US'
   quantity: number
   availableQuantity: number

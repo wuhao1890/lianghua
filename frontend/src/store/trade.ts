@@ -32,16 +32,20 @@ export const useTradeStore = defineStore('trade', () => {
         userId: p.userId,
         stockCode: p.stockCode,
         stockName: p.stockName || p.stockCode, // 兼容
-        market: p.market === 'A_STOCK' ? 'A' : 'US',
-        quantity: p.quantity,
-        availableQuantity: p.quantity, // 默认全部可卖
-        costPrice: p.avgCost || 0, // avgCost -> costPrice
-        currentPrice: p.currentPrice,
-        marketValue: p.marketValue || p.currentPrice * p.quantity,
-        profit: p.profitLoss || 0, // profitLoss -> profit
-        profitPercent: p.profitLossPercent || 0, // profitLossPercent -> profitPercent
-        todayProfit: 0, // 暂无今日数据
-        todayProfitPercent: 0
+        market: p.market === 'A_STOCK' || p.market === 'A' || /^\d{6}$/.test(String(p.stockCode || '')) ? 'A' : 'US',
+        quantity: Number(p.quantity || 0),
+        availableQuantity: Number(p.availableQuantity ?? p.quantity ?? 0),
+        costPrice: Number(p.costPrice ?? p.avgCost ?? 0),
+        currentPrice: Number(p.currentPrice || 0),
+        marketValue: Number(p.marketValue ?? (Number(p.currentPrice || 0) * Number(p.quantity || 0))),
+        profit: Number(p.profit ?? p.profitLoss ?? 0),
+        profitPercent: Number(p.profitPercent ?? p.profitLossPercent ?? 0),
+        todayProfit: Number(p.todayProfit ?? p.profit ?? p.profitLoss ?? 0),
+        todayProfitPercent: Number(p.todayProfitPercent ?? p.profitPercent ?? p.profitLossPercent ?? 0),
+        strategyName: p.strategyName,
+        bucketName: p.bucketName,
+        source: p.source,
+        assetType: p.assetType
       }))
     } catch (error) {
       positions.value = []
@@ -95,7 +99,7 @@ export const useTradeStore = defineStore('trade', () => {
         totalTradeCount: data.totalTradeCount ?? data.totalTrades ?? 0,
         winCount: data.winCount ?? data.winTrades ?? 0,
         loseCount: data.loseCount ?? data.loseTrades ?? 0,
-        winRate: Number(data.winRate || 0) / 100,
+        winRate: Number(data.winRate || 0),
         totalLoss: data.totalLoss ?? 0,
         avgProfit: data.avgProfit ?? 0,
         avgLoss: data.avgLoss ?? 0,

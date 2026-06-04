@@ -42,7 +42,7 @@
         </el-table-column>
         <el-table-column prop="stockCode" label="代码" width="100">
           <template #default="{ row }">
-            <el-link type="primary" @click="$router.push(`/stock/${row.stockCode}`)">
+            <el-link type="primary" @click="goOrderDetail(row)">
               {{ row.stockCode }}
             </el-link>
           </template>
@@ -119,11 +119,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useTradeStore } from '@/store/trade'
 import { formatDateTime, formatPrice, formatMoney } from '@/utils/format'
 
 const tradeStore = useTradeStore()
+const router = useRouter()
 
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -160,6 +162,16 @@ function loadData() {
     startDate: dateRange.value?.[0] || undefined,
     endDate: dateRange.value?.[1] || undefined
   })
+}
+
+function goOrderDetail(row: any) {
+  if (row.assetType === 'gold' || String(row.stockCode).startsWith('hf_')) {
+    router.push(`/gold?code=${encodeURIComponent(row.stockCode)}`)
+  } else if (row.assetType === 'fund') {
+    router.push(`/fund/${row.stockCode}`)
+  } else {
+    router.push(`/stock/${row.stockCode}`)
+  }
 }
 
 async function handleCancel(orderId: number) {

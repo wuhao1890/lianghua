@@ -24,6 +24,15 @@
         </div>
       </template>
 
+      <div class="board-tabs">
+        <el-radio-group v-model="selectedBoard" size="small" @change="onBoardChange">
+          <el-radio-button value="">全部A股</el-radio-button>
+          <el-radio-button value="main">沪深主板</el-radio-button>
+          <el-radio-button value="chinext">创业板</el-radio-button>
+          <el-radio-button value="star">科创板</el-radio-button>
+        </el-radio-group>
+      </div>
+
       <!-- 排序选项 -->
       <div class="rank-bar">
         <span class="rank-label">排序：</span>
@@ -55,6 +64,11 @@
         :default-sort="{ prop: 'changePercent', order: 'descending' }"
       >
         <el-table-column prop="code" label="代码" width="110" />
+        <el-table-column label="板块" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ boardName(row.code) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="name" label="名称" width="130">
           <template #default="{ row }">
             <span class="stock-name">{{ row.name }}</span>
@@ -127,6 +141,7 @@ const pageSize = ref(20)
 const searchKeyword = ref('')
 const sortField = ref('changePercent')
 const sortOrder = ref('desc')
+const selectedBoard = ref('')
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -143,10 +158,21 @@ function handleSearch() {
   }, 300)
 }
 
+function boardName(code: string) {
+  if (String(code).startsWith('300')) return '创业板'
+  if (String(code).startsWith('688')) return '科创板'
+  return '主板'
+}
+
+function onBoardChange() {
+  currentPage.value = 1
+  loadData()
+}
+
 async function loadData() {
   loading.value = true
   try {
-    const res = await getSinaAStocks(currentPage.value, pageSize.value)
+    const res = await getSinaAStocks(currentPage.value, pageSize.value, { board: selectedBoard.value })
     const data = res.data
     if (data) {
       let list = (data.data || []).map((s: any) => ({
@@ -243,6 +269,10 @@ onMounted(() => {
     margin-right: 8px;
     white-space: nowrap;
   }
+}
+
+.board-tabs {
+  margin-bottom: 12px;
 }
 
 .stock-table {

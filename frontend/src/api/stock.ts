@@ -20,9 +20,9 @@ export function getStockList(params: { market: string; page: number; pageSize: n
 }
 
 // 新浪财经代理API（通过后端转发）
-export function getSinaAStocks(page: number = 1, pageSize: number = 20, options: { silentError?: boolean } = {}) {
+export function getSinaAStocks(page: number = 1, pageSize: number = 20, options: { silentError?: boolean; board?: string } = {}) {
   return request.get('/stock/sina/a-stocks', {
-    params: { page, pageSize },
+    params: { page, pageSize, board: options.board },
     silentError: options.silentError
   } as any)
 }

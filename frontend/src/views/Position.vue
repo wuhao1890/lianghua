@@ -23,7 +23,7 @@
       >
         <el-table-column prop="stockCode" label="代码" width="100">
           <template #default="{ row }">
-            <el-link type="primary" @click="$router.push(`/stock/${row.stockCode}`)">
+            <el-link type="primary" @click="goPositionDetail(row)">
               {{ row.stockCode }}
             </el-link>
           </template>
@@ -123,6 +123,16 @@ function handleSortChange({ prop, order }: { prop: string; order: string }) {
 
 function handleSell(position: Position) {
   router.push({ path: '/trade', query: { code: position.stockCode, direction: 'SELL' } })
+}
+
+function goPositionDetail(position: Position & { assetType?: string }) {
+  if (position.assetType === 'gold' || String(position.stockCode).startsWith('hf_')) {
+    router.push(`/gold?code=${encodeURIComponent(position.stockCode)}`)
+  } else if (position.assetType === 'fund') {
+    router.push(`/fund/${position.stockCode}`)
+  } else {
+    router.push(`/stock/${position.stockCode}`)
+  }
 }
 
 onMounted(() => {
