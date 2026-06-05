@@ -127,6 +127,7 @@ function stockPrefix(code: string) {
   if (/^(sh|sz|gb_)/i.test(code)) return code.toLowerCase();
   if (/^6/.test(code)) return `sh${code}`;
   if (/^[03]/.test(code)) return `sz${code}`;
+  if (/^[a-z]{1,8}$/i.test(code)) return `gb_${code.toLowerCase()}`;
   return `sh${code}`;
 }
 
@@ -339,6 +340,26 @@ async function fetchSina(codes: string[]) {
     const rawCode = match[1];
     const fields = match[2].split(",");
     if (!fields[0] || fields.length < 10) return null;
+    if (rawCode.startsWith("gb_")) {
+      const current = Number(fields[1]) || 0;
+      const changePercent = Number(fields[2]) || 0;
+      const change = Number(fields[4]) || 0;
+      const prevClose = Number(fields[26]) || (current - change);
+      return {
+        code: rawCode.replace(/^gb_/, ""),
+        name: fields[0],
+        current,
+        open: Number(fields[5]) || 0,
+        prevClose,
+        high: Number(fields[6]) || 0,
+        low: Number(fields[7]) || 0,
+        volume: Number(fields[10]) || 0,
+        amount: Number(fields[12]) || 0,
+        change,
+        changePercent,
+        market: "US"
+      };
+    }
     const current = Number(fields[3]) || 0;
     const prevClose = Number(fields[2]) || 0;
     const change = current - prevClose;

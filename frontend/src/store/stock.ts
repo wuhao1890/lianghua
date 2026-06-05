@@ -117,6 +117,7 @@ export const useStockStore = defineStore('stock', () => {
       let sinaCode = code
       if (code.startsWith('6')) sinaCode = 'sh' + code
       else if (code.startsWith('0') || code.startsWith('3')) sinaCode = 'sz' + code
+      else if (/^[a-z]{1,8}$/i.test(code)) sinaCode = 'gb_' + code.toLowerCase()
       else sinaCode = 'sh' + code
       
       const res = await getSinaRealtime(sinaCode)
