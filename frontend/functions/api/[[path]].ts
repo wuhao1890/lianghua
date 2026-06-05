@@ -818,14 +818,64 @@ function isValidLabStateShape(state: unknown) {
 
 async function saveLabState(userId: number, data: AnyRecord) {
   const previous = await labState(userId);
+  const next = mergeLabState(previous, data);
+  await blobStore().setJSON(`ai-lab-state:${userId}`, next);
+  await markDirtyUser(userId);
+  return next;
+}
+
+function normalizeResearchFocusList(value: unknown): AnyRecord[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: AnyRecord[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as AnyRecord;
+    const target = String(item.target || "").trim();
+    const direction = String(item.direction || "").trim();
+    if (!target && !direction) continue;
+    const key = String(item.id || `${target}|${direction}`);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      id: String(item.id || `focus-${target || "global"}-${result.length}`),
+      target,
+      direction,
+      updatedAt: String(item.updatedAt || new Date().toISOString())
+    });
+  }
+  return result;
+}
+
+function focusListFromState(state: AnyRecord) {
+  const list = normalizeResearchFocusList(state?.researchFocuses);
+  if (!list.length && state?.researchFocus && typeof state.researchFocus === "object") {
+    return normalizeResearchFocusList([state.researchFocus]);
+  }
+  return list;
+}
+
+function mergeResearchFocuses(previous: AnyRecord, incoming: AnyRecord) {
+  const incomingList = focusListFromState(incoming);
+  const previousList = focusListFromState(previous);
+  if (incoming.researchFocusesReplace === true) return incomingList;
+  const merged = new Map<string, AnyRecord>();
+  for (const item of previousList) merged.set(String(item.id || `${item.target}|${item.direction}`), item);
+  for (const item of incomingList) merged.set(String(item.id || `${item.target}|${item.direction}`), item);
+  return [...merged.values()];
+}
+
+function mergeLabState(previous: AnyRecord, data: AnyRecord) {
+  const researchFocuses = mergeResearchFocuses(previous, data);
   const next = {
     ...previous,
     ...data,
+    researchFocuses,
+    researchFocus: researchFocuses[0] || null,
     iterationCount: Number(data.iterationCount ?? data.generation ?? previous.iterationCount ?? 0),
     updatedAt: new Date().toISOString()
   };
-  await blobStore().setJSON(`ai-lab-state:${userId}`, next);
-  await markDirtyUser(userId);
+  delete (next as AnyRecord).researchFocusesReplace;
   return next;
 }
 
@@ -1488,8 +1538,10 @@ async function route(req: Request) {
         if (!isValidLabStateShape(item.state)) {
           return send({ userId: Number(item.userId) }, "同步状态结构无效，已拒绝写入", 400);
         }
-        await store.setJSON(`ai-lab-state:${Number(item.userId)}`, {
-          ...item.state,
+        const userId = Number(item.userId);
+        const previous = await labState(userId);
+        await store.setJSON(`ai-lab-state:${userId}`, {
+          ...mergeLabState(previous, item.state),
           syncedAt: new Date().toISOString()
         });
       }

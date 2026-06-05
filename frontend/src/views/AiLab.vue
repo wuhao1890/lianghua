@@ -955,7 +955,7 @@ function applyAllResearchFocuses() {
   for (const focus of researchFocuses.value) applyFocusToExperiments(focus)
 }
 
-async function persistLabState() {
+async function persistLabState(options: { replaceResearchFocuses?: boolean } = {}) {
   const payload = {
     generation: generation.value,
     iterationCount: iterationCount.value,
@@ -969,6 +969,7 @@ async function persistLabState() {
     portfolioPlan: activePortfolioPlan.value,
     researchFocuses: researchFocuses.value,
     researchFocus: researchFocuses.value[0] || null,
+    researchFocusesReplace: options.replaceResearchFocuses === true,
     blacklistItems: blacklistItems.value,
     champion: champion.value,
     lastRunAt: new Date().toISOString()
@@ -1610,7 +1611,7 @@ async function applyResearchFocus() {
 
 async function removeResearchFocus(focus: ResearchFocus) {
   researchFocuses.value = researchFocuses.value.filter((item) => researchFocusKey(item) !== researchFocusKey(focus))
-  await persistLabState()
+  await persistLabState({ replaceResearchFocuses: true })
   ElMessage.success('研究任务已移除')
 }
 
