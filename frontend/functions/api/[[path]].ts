@@ -737,6 +737,29 @@ async function saveLabState(userId: number, data: AnyRecord) {
   return next;
 }
 
+function isBadResearchDirection(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const questionCount = (text.match(/\?/g) || []).length;
+  return questionCount >= 6 && questionCount / Math.max(text.length, 1) > 0.35;
+}
+
+function defaultResearchDirection(target: string) {
+  const base = "结合历史周期、技术指标、新闻舆情、资金流、行业位置和风险回撤，持续总结买点、卖点和持仓周期。";
+  const known: Record<string, string> = {
+    "600519": `贵州茅台：${base}重点研究白酒消费周期、北向资金、机构观点、业绩公告和估值区间。`,
+    "300750": `宁德时代：${base}重点研究新能源产业链、订单变化、原材料价格、政策新闻和成长股风险。`,
+    "110022": `易方达消费行业股票：${base}重点研究基金净值曲线、重仓消费股表现、基金经理风格和回撤控制。`
+  };
+  return known[target] || `${target ? `${target}：` : ""}${base}`;
+}
+
+function cleanResearchDirection(direction: string, target: string) {
+  const text = String(direction || "").trim();
+  if (!text || isBadResearchDirection(text)) return defaultResearchDirection(target);
+  return text;
+}
+
 function normalizeResearchFocusList(value: unknown): AnyRecord[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -745,8 +768,9 @@ function normalizeResearchFocusList(value: unknown): AnyRecord[] {
     if (!raw || typeof raw !== "object") continue;
     const item = raw as AnyRecord;
     const target = String(item.target || "").trim();
-    const direction = String(item.direction || "").trim();
-    if (!target && !direction) continue;
+    const rawDirection = String(item.direction || "").trim();
+    if (!target && !rawDirection) continue;
+    const direction = cleanResearchDirection(rawDirection, target);
     const key = String(item.id || `${target}|${direction}`);
     if (seen.has(key)) continue;
     seen.add(key);

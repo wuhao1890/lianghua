@@ -723,7 +723,7 @@ const learningInsights = computed(() => {
   ]
   const focusInsights = researchFocuses.value.slice(0, 4).map((item) => ({
     title: `指定研究：${item.target || '全局方向'}`,
-    detail: item.direction || '等待补充方向，先按历史规律、新闻舆情、资金流和技术面持续研究。'
+    detail: researchDirectionText(item)
   }))
   return [...focusInsights, ...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 8)
 })
@@ -915,7 +915,7 @@ function normalizeResearchFocuses(state: any): ResearchFocus[] {
       ? [state.researchFocus]
       : []
   return list
-    .map((item: any, index: number) => ({
+    .map((item: any, index: number) => cleanResearchFocus({
       id: String(item?.id || `focus-${item?.updatedAt || Date.now()}-${index}`),
       target: String(item?.target || '').trim(),
       direction: String(item?.direction || '').trim(),
@@ -932,7 +932,7 @@ function researchFocusSummary() {
   if (!researchFocuses.value.length) return '全市场组合筛选 收益优先，同时记录风险教训'
   return researchFocuses.value
     .slice(0, 5)
-    .map((item) => `${item.target || '全局'}：${item.direction || '持续研究'}`)
+    .map((item) => `${item.target || '全局'}：${researchDirectionText(item)}`)
     .join('；')
 }
 
@@ -943,7 +943,7 @@ function focusMatchesExperiment(focus: ResearchFocus, item: Pick<LabExperiment, 
 }
 
 function applyFocusToExperiments(focus: ResearchFocus) {
-  const direction = focus.direction || '继续深化该标的的历史规律、新闻舆情、资金流和技术面'
+  const direction = researchDirectionText(focus)
   for (const item of experiments.value) {
     if (!focusMatchesExperiment(focus, item)) continue
     item.mutation = `用户指定研究任务：${focus.target || '全局方向'}。重点：${direction}。`
@@ -1585,7 +1585,7 @@ function tradeStrategyName(trade: SimulatedTrade) {
 
 async function applyResearchFocus() {
   const target = researchForm.target.trim()
-  const direction = researchForm.direction.trim()
+  const direction = cleanResearchDirection(researchForm.direction.trim(), target)
   if (!target && !direction) {
     ElMessage.warning('请填写要研究的标的或学习方向')
     return
@@ -1607,6 +1607,41 @@ async function applyResearchFocus() {
   researchForm.direction = ''
   await persistLabState()
   ElMessage.success(existing ? '研究任务已更新，会继续参与后续迭代' : '研究任务已加入，会参与后续每次迭代')
+}
+
+function isBadResearchText(value?: string) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  const questionCount = (text.match(/\?/g) || []).length
+  return questionCount >= 6 && questionCount / Math.max(text.length, 1) > 0.35
+}
+
+function defaultResearchDirection(target?: string) {
+  const code = String(target || '').trim()
+  const base = '结合历史周期、技术指标、新闻舆情、资金流、行业位置和风险回撤，持续总结买点、卖点和持仓周期。'
+  const known: Record<string, string> = {
+    '600519': `贵州茅台：${base}重点研究白酒消费周期、北向资金、机构观点、业绩公告和估值区间。`,
+    '300750': `宁德时代：${base}重点研究新能源产业链、订单变化、原材料价格、政策新闻和成长股风险。`,
+    '110022': `易方达消费行业股票：${base}重点研究基金净值曲线、重仓消费股表现、基金经理风格和回撤控制。`
+  }
+  return known[code] || `${code ? `${code}：` : ''}${base}`
+}
+
+function cleanResearchDirection(direction?: string, target?: string) {
+  const text = String(direction || '').trim()
+  if (!text || isBadResearchText(text)) return defaultResearchDirection(target)
+  return text
+}
+
+function cleanResearchFocus(focus: ResearchFocus): ResearchFocus {
+  return {
+    ...focus,
+    direction: cleanResearchDirection(focus.direction, focus.target)
+  }
+}
+
+function researchDirectionText(focus: Pick<ResearchFocus, 'target' | 'direction'>) {
+  return cleanResearchDirection(focus.direction, focus.target)
 }
 
 async function removeResearchFocus(focus: ResearchFocus) {
