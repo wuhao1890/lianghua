@@ -184,41 +184,6 @@ export interface ProfitRecord {
   profitPercent: number
 }
 
-export interface HuabaoBrokerStatus {
-  brokerName: string
-  platformName: string
-  apiBase: string
-  clientId?: string
-  accountId?: string
-  clientIdMasked?: string
-  accountIdMasked?: string
-  tradingEnabled: boolean
-  officialDocsConfirmed: boolean
-  sandboxReady: boolean
-  cashTransferReady: boolean
-  ready: boolean
-  blockers: string[]
-  modeText: string
-  warning: string
-  updatedAt?: string | null
-}
-
-export interface RealTradeAttempt {
-  id: number
-  userId: number
-  brokerName: string
-  platformName: string
-  action: string
-  stockCode: string
-  stockName: string
-  price: number
-  quantity: number
-  amount: number
-  status: string
-  reason: string
-  createdAt: string
-}
-
 // ==================== 技术指标 ====================
 export interface TechnicalIndicator {
   name: string
@@ -246,19 +211,6 @@ export interface BacktestResult {
   winRate: number
   totalTrades: number
   trades: TradeLog[]
-}
-
-// ==================== 充值相关 ====================
-export interface RechargeOrder {
-  id: number
-  userId: number
-  amount: number
-  status: 'PENDING' | 'SUCCESS' | 'FAILED'
-  type: 'WECHAT' | 'ADMIN'
-  operatorId?: number
-  remark?: string
-  createTime: string
-  updateTime: string
 }
 
 // ==================== AI Agent ====================

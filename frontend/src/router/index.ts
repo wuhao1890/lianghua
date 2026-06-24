@@ -149,12 +149,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '收益分析', icon: 'DataAnalysis' }
       },
       {
-        path: 'recharge',
-        name: 'Recharge',
-        component: () => import('@/views/Recharge.vue'),
-        meta: { title: '充值中心', icon: 'CreditCard' }
-      },
-      {
         path: 'alert-settings',
         name: 'AlertSettings',
         component: () => import('@/views/AlertSettings.vue'),
@@ -166,12 +160,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/AiAgent.vue'),
         meta: { title: '智能助手', icon: 'Monitor' }
       },
-      {
-        path: 'admin/recharge',
-        name: 'AdminRecharge',
-        component: () => import('@/views/AdminRecharge.vue'),
-        meta: { title: '充值管理', icon: 'Management', admin: true }
-      }
     ]
   }
 ]

@@ -87,10 +87,6 @@
             <el-icon><Odometer /></el-icon>
             仪表盘
           </el-menu-item>
-          <el-menu-item index="/recharge">
-            <el-icon><CreditCard /></el-icon>
-            充值中心
-          </el-menu-item>
           <el-menu-item index="/alert-settings">
             <el-icon><Message /></el-icon>
             邮箱告警
@@ -98,10 +94,6 @@
           <el-menu-item index="/ai-agent">
             <el-icon><Monitor /></el-icon>
             智能助手
-          </el-menu-item>
-          <el-menu-item v-if="userStore.isAdmin" index="/admin/recharge">
-            <el-icon><Management /></el-icon>
-            充值管理
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
@@ -154,11 +146,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
-  CreditCard,
   DataAnalysis,
   Document,
   List,
-  Management,
   Message,
   Money,
   Monitor,
@@ -177,7 +167,7 @@ const userStore = useUserStore()
 const stockPaths = ['/market', '/a-stocks', '/chinext-stocks', '/star-stocks', '/us-stocks']
 const assetPaths = ['/gold', '/funds']
 const tradePaths = ['/trade', '/position', '/history', '/analysis']
-const userPaths = ['/dashboard', '/recharge', '/alert-settings', '/ai-agent', '/admin/recharge']
+const userPaths = ['/dashboard', '/alert-settings', '/ai-agent']
 const aiLabPaths = ['/ai-lab', '/ai-lab/growth', '/ai-lab/research', '/ai-lab/portfolio']
 
 const activeMenu = computed(() => {

@@ -103,7 +103,6 @@ const props = defineProps<{
   availableCash: number
   availableQuantity: number
   submitting?: boolean
-  realMode?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -119,7 +118,7 @@ const currentPrice = computed(() => {
   return price.value || props.stock.currentPrice
 })
 
-const submitPrefix = computed(() => props.realMode ? '真实委托' : '模拟')
+const submitPrefix = computed(() => '模拟')
 
 const estimatedAmount = computed(() => {
   return currentPrice.value * quantity.value
@@ -166,8 +165,8 @@ async function handleSubmit() {
 
   try {
     await ElMessageBox.confirm(
-      `${props.realMode ? '真实交易' : '模拟交易'}确认\n` +
-      `模式: ${props.realMode ? '华宝证券真实交易' : '系统模拟交易'}\n` +
+      `模拟交易确认\n` +
+      `模式: 系统模拟交易\n` +
       `股票: ${props.stock.name} (${props.stock.code})\n` +
       `价格: ${formatPrice(currentPrice.value)}\n` +
       `数量: ${quantity.value} 股\n` +

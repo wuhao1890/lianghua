@@ -49,10 +49,6 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true
       },
-      '/api/recharge': {
-        target: 'http://localhost:8080',
-        changeOrigin: true
-      },
       // 新浪财经API代理
       '/sina-api': {
         target: 'https://hq.sinajs.cn',
@@ -69,6 +65,13 @@ export default defineConfig({
     preprocessorOptions: {
       scss: {
         additionalData: ''
+      }
+    }
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html')
       }
     }
   }

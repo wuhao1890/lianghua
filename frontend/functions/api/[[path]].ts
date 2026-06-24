@@ -238,93 +238,6 @@ async function saveAlertSettings(userId: number, data: AnyRecord) {
   return next;
 }
 
-function defaultBrokerConfig() {
-  return {
-    brokerName: "华宝证券",
-    platformName: "华宝智投开放接口",
-    apiBase: currentEnv.HUABAO_API_BASE || "",
-    clientId: currentEnv.HUABAO_CLIENT_ID || "",
-    accountId: currentEnv.HUABAO_ACCOUNT_ID || "",
-    tradingEnabled: currentEnv.HUABAO_TRADING_ENABLED === "true",
-    officialDocsConfirmed: false,
-    sandboxReady: false,
-    cashTransferReady: false,
-    updatedAt: null
-  };
-}
-
-function maskValue(value = "") {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  if (text.length <= 6) return `${text.slice(0, 1)}***${text.slice(-1)}`;
-  return `${text.slice(0, 3)}***${text.slice(-3)}`;
-}
-
-async function brokerConfig(userId: number) {
-  const saved = await blobStore().get(`broker-config:${userId}`, { type: "json" }) || {};
-  const merged = { ...defaultBrokerConfig(), ...saved };
-  return {
-    ...merged,
-    clientIdMasked: maskValue(merged.clientId),
-    accountIdMasked: maskValue(merged.accountId),
-    clientId: "",
-    accountId: ""
-  };
-}
-
-async function saveBrokerConfig(userId: number, data: AnyRecord) {
-  const next = {
-    brokerName: "华宝证券",
-    platformName: "华宝智投开放接口",
-    apiBase: String(data.apiBase || "").trim(),
-    clientId: String(data.clientId || "").trim(),
-    accountId: String(data.accountId || "").trim(),
-    tradingEnabled: Boolean(data.tradingEnabled),
-    officialDocsConfirmed: Boolean(data.officialDocsConfirmed),
-    sandboxReady: Boolean(data.sandboxReady),
-    cashTransferReady: Boolean(data.cashTransferReady),
-    updatedAt: new Date().toISOString()
-  };
-  await blobStore().setJSON(`broker-config:${userId}`, next);
-  return brokerConfig(userId);
-}
-
-async function realTradingGuard(userId: number) {
-  const raw = await blobStore().get(`broker-config:${userId}`, { type: "json" }) || defaultBrokerConfig();
-  const missing = [];
-  if (!raw.officialDocsConfirmed) missing.push("华宝证券官方开放接口文档未确认");
-  if (!raw.sandboxReady) missing.push("华宝证券测试环境未完成联调");
-  if (!raw.apiBase) missing.push("接口地址未配置");
-  if (!raw.clientId) missing.push("客户编号未配置");
-  if (!raw.accountId) missing.push("证券账户未配置");
-  if (!raw.tradingEnabled) missing.push("真实交易开关未开启");
-  return {
-    allowed: missing.length === 0,
-    missing,
-    config: raw
-  };
-}
-
-async function recordRealTradeAttempt(userId: number, action: string, data: AnyRecord, status: string, reason: string) {
-  const records = await blobStore().get(`real-trade-attempts:${userId}`, { type: "json" }) || [];
-  records.unshift({
-    id: Date.now(),
-    userId,
-    brokerName: "华宝证券",
-    platformName: "华宝智投开放接口",
-    action,
-    stockCode: data.stockCode || "",
-    stockName: data.stockName || "",
-    price: Number(data.price || 0),
-    quantity: Number(data.quantity || 0),
-    amount: Number(data.price || 0) * Number(data.quantity || 0),
-    status,
-    reason,
-    createdAt: new Date().toISOString()
-  });
-  await blobStore().setJSON(`real-trade-attempts:${userId}`, records.slice(0, 100));
-}
-
 async function fetchSina(codes: string[]) {
   if (!codes.length) return [];
   const response = await fetch(`https://hq.sinajs.cn/list=${codes.join(",")}`, {
@@ -1732,50 +1645,8 @@ async function route(req: Request) {
   if (aiConfigById && method === "DELETE") return send(null, "配置已删除");
   if (path.match(/^\/ai\/configs\/(\d+)\/test$/) && method === "POST") return send({ available: true }, "公网量化舆情引擎可用");
 
-  if (method === "GET" && path === "/broker/huabao/status") {
-    const userId = userIdFrom(req);
-    const guard = await realTradingGuard(userId);
-    return send({
-      ...(await brokerConfig(userId)),
-      ready: guard.allowed,
-      blockers: guard.missing,
-      modeText: guard.allowed ? "真实交易已具备联调条件" : "真实交易未启用",
-      warning: "真实交易会使用证券账户现金和持仓，必须完成华宝证券官方授权、测试环境联调和人工确认。"
-    });
-  }
-  if (method === "POST" && path === "/broker/huabao/config") {
-    const data = await jsonBody(req);
-    if (data.tradingEnabled && !data.officialDocsConfirmed) {
-      return send(null, "请先确认华宝证券官方开放接口文档和授权，不允许直接开启真实交易", 400);
-    }
-    return send(await saveBrokerConfig(userIdFrom(req), data), "华宝证券接入配置已保存");
-  }
-  if (method === "GET" && path === "/broker/huabao/real-trade-records") {
-    return send(await blobStore().get(`real-trade-attempts:${userIdFrom(req)}`, { type: "json" }) || []);
-  }
-  if (method === "POST" && (path === "/broker/huabao/buy" || path === "/broker/huabao/sell")) {
-    const userId = userIdFrom(req);
-    const data = await jsonBody(req);
-    const action = path.endsWith("/buy") ? "真实买入" : "真实卖出";
-    const guard = await realTradingGuard(userId);
-    if (!guard.allowed) {
-      const reason = `真实交易已拦截：${guard.missing.join("、")}`;
-      await recordRealTradeAttempt(userId, action, data, "已拦截", reason);
-      return send({ blockers: guard.missing }, reason, 423);
-    }
-    const reason = "华宝智投官方开放接口尚未接入签名和报文规则，系统仅保留真实交易入口，不发送真实委托。";
-    await recordRealTradeAttempt(userId, action, data, "待接入", reason);
-    return send({ blockers: [reason] }, reason, 501);
-  }
-  if (method === "POST" && path === "/broker/huabao/cash-transfer") {
-    const userId = userIdFrom(req);
-    const data = await jsonBody(req);
-    const guard = await realTradingGuard(userId);
-    const blockers = [...guard.missing];
-    if (!guard.config.cashTransferReady) blockers.push("银证转账接口未完成华宝证券授权");
-    const reason = `真实资金划转已拦截：${blockers.join("、")}`;
-    await recordRealTradeAttempt(userId, "真实资金划转", data, "已拦截", reason);
-    return send({ blockers }, reason, 423);
+  if (path.startsWith("/broker/huabao")) {
+    return send(null, "真实交易功能已删除，系统仅保留模拟交易", 410);
   }
 
   if (method === "GET" && path === "/trade/account") return send(await account(userIdFrom(req)));
@@ -1833,7 +1704,7 @@ async function route(req: Request) {
   if (path.startsWith("/stock/fund/list")) return send({ list: [], total: 0, page: 1, pageSize: 20 });
   if (path.startsWith("/stock/gold/products")) return send({ hf_GC: "COMEX黄金", hf_XAU: "伦敦金" });
   if (path.startsWith("/stock/gold/")) return send(null, "黄金公网数据源暂未接入", 503);
-  if (path.startsWith("/recharge/")) return send({ list: [], total: 0 });
+  if (path.startsWith("/recharge/")) return send(null, "充值功能已删除", 410);
   if (path.startsWith("/stock/sectors")) return send([]);
 
   return send(null, `接口不存在：${path}`, 404);
