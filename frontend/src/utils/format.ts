@@ -1,14 +1,11 @@
-/**
- * 金额格式化：保留2位小数，千分位分隔
- */
 export function formatMoney(value: number | string | undefined | null): string {
-  if (value === null || value === undefined || value === '') return '0.00'
+  if (value === null || value === undefined || value === '') return '0.00亿'
   const num = typeof value === 'string' ? parseFloat(value) : value
-  if (isNaN(num)) return '0.00'
-  return num.toLocaleString('zh-CN', {
+  if (isNaN(num)) return '0.00亿'
+  return `${(num / 100000000).toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
+    maximumFractionDigits: 8
+  })}亿`
 }
 
 /**

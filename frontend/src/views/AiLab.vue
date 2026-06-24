@@ -1693,7 +1693,10 @@ function formatPercent(value: number) {
 }
 
 function formatMoney(value: number) {
-  return `¥${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+  return `${(Number(value || 0) / 100000000).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8
+  })}亿`
 }
 
 function formatTime(value?: string) {
