@@ -354,7 +354,10 @@
               <p>{{ opinion.detail }}</p>
               <div class="voice-meta">
                 <span>{{ opinion.publishTime || '实时画像' }}</span>
+                <span v-if="opinion.source">{{ opinion.source }}</span>
+                <span v-if="opinion.needsAuth">待授权</span>
                 <span>影响力 {{ opinion.influence || 0 }}/10</span>
+                <a v-if="opinion.url" :href="opinion.url" target="_blank" rel="noreferrer">打开原文</a>
               </div>
             </article>
           </div>
@@ -441,6 +444,41 @@
       </template>
     </el-card>
 
+    <el-card id="wechat-source" shadow="hover" class="wechat-import-card">
+      <template #header>
+        <div class="card-header">
+          <span class="title">微信公众号舆情导入</span>
+          <span class="header-note">支持嘟嘟地瓜，导入后参与大V舆情评分</span>
+        </div>
+      </template>
+      <el-form label-position="top" class="wechat-form">
+        <div class="wechat-form-row">
+          <el-form-item label="文章标题">
+            <el-input v-model="wechatArticleForm.title" placeholder="粘贴微信公众号文章标题" />
+          </el-form-item>
+          <el-form-item label="关联代码">
+            <el-input v-model="wechatArticleForm.stockCodes" placeholder="例如 600519，多个用逗号分隔" />
+          </el-form-item>
+        </div>
+        <el-form-item label="原文链接">
+          <el-input v-model="wechatArticleForm.url" placeholder="粘贴 mp.weixin.qq.com 原文链接" />
+        </el-form-item>
+        <el-form-item label="文章正文">
+          <el-input
+            v-model="wechatArticleForm.content"
+            type="textarea"
+            :rows="5"
+            placeholder="从桌面微信文章复制正文，系统只按真实文本分析，不会编造观点"
+          />
+        </el-form-item>
+        <div class="wechat-actions">
+          <el-button type="primary" :loading="wechatImporting" @click="submitWechatArticle">
+            导入并重新研判
+          </el-button>
+        </div>
+      </el-form>
+    </el-card>
+
     <el-card id="tech-signal" shadow="hover" class="signal-card">
       <template #header>
         <span class="title">技术面买卖信号</span>
@@ -453,10 +491,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { ArrowLeft, Bottom, Loading, Refresh, Top } from '@element-plus/icons-vue'
 import { useStockStore } from '@/store/stock'
 import { getTradeSignal } from '@/api/analysis'
-import { analyzeStock, getModelConfigs } from '@/api/ai'
+import { analyzeStock, getModelConfigs, importWechatArticle } from '@/api/ai'
 import { formatNumber, formatPercent, formatPrice, getColor } from '@/utils/format'
 import KlineChart from '@/components/KlineChart.vue'
 import SignalIndicator from '@/components/SignalIndicator.vue'
@@ -476,6 +515,13 @@ const signals = ref<any>([])
 const aiResult = ref<AiAnalysisResponse | null>(null)
 const aiLoading = ref(false)
 const hasAiConfig = ref(false)
+const wechatImporting = ref(false)
+const wechatArticleForm = ref({
+  title: '',
+  url: '',
+  stockCodes: '',
+  content: ''
+})
 
 const normalizedSignal = computed(() => (aiResult.value?.signal || 'HOLD').toLowerCase())
 const detailNav = [
@@ -542,6 +588,38 @@ async function loadAiAnalysis() {
     aiResult.value = null
   } finally {
     aiLoading.value = false
+  }
+}
+
+async function submitWechatArticle() {
+  if (!wechatArticleForm.value.title.trim()) {
+    ElMessage.warning('请填写微信公众号文章标题')
+    return
+  }
+  if (wechatArticleForm.value.content.trim().length < 20) {
+    ElMessage.warning('请粘贴真实文章正文，至少20个字')
+    return
+  }
+  wechatImporting.value = true
+  try {
+    await importWechatArticle({
+      title: wechatArticleForm.value.title.trim(),
+      url: wechatArticleForm.value.url.trim(),
+      content: wechatArticleForm.value.content.trim(),
+      stockCodes: wechatArticleForm.value.stockCodes
+        .split(/[,，\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    })
+    ElMessage.success('微信公众号文章已导入，正在重新研判')
+    wechatArticleForm.value.title = ''
+    wechatArticleForm.value.url = ''
+    wechatArticleForm.value.content = ''
+    await loadAiAnalysis()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '导入失败')
+  } finally {
+    wechatImporting.value = false
   }
 }
 
@@ -637,6 +715,7 @@ function safeScore(value: any) {
 
 async function bootstrap() {
   loading.value = true
+  wechatArticleForm.value.stockCodes = stockCode.value
   try {
     klineData.value = null
     signals.value = null
@@ -683,9 +762,26 @@ watch(stockCode, async () => {
 .info-card,
 .research-card,
 .chart-card,
+.wechat-import-card,
 .signal-card {
   border-radius: 8px;
   margin-bottom: 16px;
+}
+
+.header-note {
+  color: #909399;
+  font-size: 13px;
+}
+
+.wechat-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 12px;
+}
+
+.wechat-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .stock-detail > .info-card {

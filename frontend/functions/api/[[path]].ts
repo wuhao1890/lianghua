@@ -8,6 +8,8 @@ type KVNamespaceLike = {
 type PagesEnv = {
   LIANGHUA_STATE?: KVNamespaceLike;
   LIANGHUA_SYNC_TOKEN?: string;
+  WECHAT_MP_FEED_URL?: string;
+  WECHAT_MP_FEED_TOKEN?: string;
   HUABAO_API_BASE?: string;
   HUABAO_CLIENT_ID?: string;
   HUABAO_ACCOUNT_ID?: string;
@@ -1243,20 +1245,179 @@ async function fetchGubaOpinions(code: string) {
   }
 }
 
+const WECHAT_WATCH_ACCOUNTS = [
+  {
+    name: "嘟嘟地瓜",
+    source: "微信公众号",
+    influence: 8,
+    seedUrl: "https://mp.weixin.qq.com/s?__biz=MzYyMzMzNDAzMA==&mid=2247484400&idx=1&sn=9b6b8652ce4b09823eb921a85bcb2e31"
+  }
+];
+const WECHAT_ARTICLES_KEY = "wechat-mp-articles";
+
+function normalizeWechatArticles(raw: any): AnyRecord[] {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : Array.isArray(raw?.articles) ? raw.articles : [];
+  return list.filter((item: AnyRecord) => item && typeof item === "object");
+}
+
+function normalizeCodes(value: any) {
+  const list = Array.isArray(value) ? value : String(value || "").split(/[,，\s]+/);
+  return list.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20);
+}
+
+function articleMatchesStock(article: AnyRecord, code: string, keyword: string) {
+  const stockCodes = normalizeCodes(article.stockCodes || article.codes);
+  const title = cleanText(article.title || "");
+  const content = cleanText(article.content || article.summary || article.digest || "");
+  const keywords = normalizeCodes(article.keywords || article.relatedKeywords);
+  const haystack = `${title} ${content} ${keywords.join(" ")}`;
+  return stockCodes.includes(code) || (!!keyword && haystack.includes(keyword)) || haystack.includes(code);
+}
+
+async function storedWechatArticles() {
+  return normalizeWechatArticles(await blobStore().get(WECHAT_ARTICLES_KEY, { type: "json" }));
+}
+
+async function saveWechatArticle(data: AnyRecord) {
+  const title = cleanText(data.title || "");
+  const content = cleanText(data.content || data.summary || "");
+  const url = String(data.url || "").trim();
+  const account = cleanText(data.account || data.accountName || "嘟嘟地瓜");
+  if (!title) throw new Error("请填写微信公众号文章标题");
+  if (content.length < 20) throw new Error("请粘贴真实文章正文，至少20个字");
+  const watched = WECHAT_WATCH_ACCOUNTS.find((item) => account.includes(item.name)) || WECHAT_WATCH_ACCOUNTS[0];
+  const item = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    account: watched.name,
+    source: watched.source,
+    title,
+    content,
+    url,
+    stockCodes: normalizeCodes(data.stockCodes || data.codes),
+    keywords: normalizeCodes(data.keywords || data.relatedKeywords),
+    publishTime: data.publishTime || new Date().toISOString(),
+    importedAt: new Date().toISOString()
+  };
+  const list = await storedWechatArticles();
+  const next = [item, ...list.filter((old) => old.title !== item.title || old.url !== item.url)].slice(0, 200);
+  await blobStore().setJSON(WECHAT_ARTICLES_KEY, next);
+  return item;
+}
+
+async function storedWechatOpinions(code: string, keyword: string) {
+  const opinions: AnyRecord[] = [];
+  for (const article of await storedWechatArticles()) {
+    const account = String(article.account || article.author || article.source || "").trim();
+    const watched = WECHAT_WATCH_ACCOUNTS.find((item) => account.includes(item.name));
+    if (!watched || !articleMatchesStock(article, code, keyword)) continue;
+    const title = cleanText(article.title || "");
+    const content = cleanText(article.content || article.summary || article.digest || "");
+    const sentiment = sentimentFromText(`${title} ${content}`);
+    opinions.push({
+      name: `${watched.name}（微信公众号）`,
+      type: sentiment.sentiment,
+      view: title,
+      detail: `已导入微信公众号真实文章解析：${sentiment.reason}`,
+      influence: watched.influence,
+      publishTime: article.publishTime || article.importedAt || new Date().toISOString(),
+      source: watched.source,
+      url: article.url || "",
+      score: sentiment.score,
+      verified: true
+    });
+    if (opinions.length >= 5) break;
+  }
+  return opinions;
+}
+
+function wechatUnavailableOpinions() {
+  return WECHAT_WATCH_ACCOUNTS.map((account) => ({
+    name: `${account.name}（微信公众号）`,
+    type: "neutral" as Sentiment,
+    view: "已加入嘟嘟地瓜公众号文章源",
+    detail: "已记录你提供的微信公众号原文链接。微信服务器要求环境验证，Cloudflare 不能直接抓正文；请配置 WECHAT_MP_FEED_URL 或第三方授权源后才读取真实正文。当前不伪造观点，不参与多空评分。",
+    influence: 0,
+    publishTime: "未接入",
+    source: account.source,
+    url: account.seedUrl,
+    score: undefined,
+    verified: false,
+    needsAuth: true
+  }));
+}
+
+async function fetchWechatMpOpinions(code: string, keyword: string) {
+  const stored = await storedWechatOpinions(code, keyword);
+  const feedUrl = String(currentEnv.WECHAT_MP_FEED_URL || "").trim();
+  if (!feedUrl) return stored.length ? stored : wechatUnavailableOpinions();
+  try {
+    const url = new URL(feedUrl);
+    url.searchParams.set("stockCode", code);
+    url.searchParams.set("keyword", keyword);
+    const headers: Record<string, string> = { "User-Agent": "Mozilla/5.0" };
+    if (currentEnv.WECHAT_MP_FEED_TOKEN) headers.Authorization = `Bearer ${currentEnv.WECHAT_MP_FEED_TOKEN}`;
+    const response = await fetch(url.toString(), { headers });
+    if (!response.ok) return stored.length ? stored : wechatUnavailableOpinions();
+    const articles = normalizeWechatArticles(await response.json());
+    const opinions: AnyRecord[] = [];
+    for (const article of articles) {
+      const account = String(article.account || article.author || article.source || "").trim();
+      const watched = WECHAT_WATCH_ACCOUNTS.find((item) => account.includes(item.name) || String(article.accountName || "").includes(item.name));
+      if (!watched) continue;
+      const title = cleanText(article.title || "");
+      const content = cleanText(article.content || article.summary || article.digest || "");
+      const haystack = `${title} ${content}`;
+      if (!title || (keyword && !haystack.includes(keyword) && !haystack.includes(code))) continue;
+      const sentiment = sentimentFromText(haystack);
+      opinions.push({
+        name: `${watched.name}（微信公众号）`,
+        type: sentiment.sentiment,
+        view: title,
+        detail: `微信公众号真实文章解析：${sentiment.reason}`,
+        influence: watched.influence,
+        publishTime: article.publishTime || article.date || new Date().toISOString(),
+        source: watched.source,
+        url: article.url || "",
+        score: sentiment.score,
+        verified: true
+      });
+      if (opinions.length >= 5) break;
+    }
+    if (opinions.length || stored.length) return [...stored, ...opinions].slice(0, 8);
+    return WECHAT_WATCH_ACCOUNTS.map((account) => ({
+      name: `${account.name}（微信公众号）`,
+      type: "neutral" as Sentiment,
+      view: `未发现与 ${keyword || code} 直接相关的最新文章`,
+      detail: "已连接微信公众号授权源，但本次没有匹配到该股票/基金/金属相关内容；不伪造观点，不参与多空评分。",
+      influence: 0,
+      publishTime: new Date().toISOString(),
+      source: account.source,
+      url: account.seedUrl,
+      score: undefined,
+      verified: true
+    }));
+  } catch {
+    return stored.length ? stored : wechatUnavailableOpinions();
+  }
+}
+
 async function sentimentBundle(code: string, stockName?: string) {
   const keyword = stockName && stockName !== code ? stockName : code;
-  const [eastmoneyNews, sinaNews, announcements, opinions] = await Promise.all([
+  const [eastmoneyNews, sinaNews, announcements, gubaOpinions, wechatOpinions] = await Promise.all([
     fetchEastmoneyNews(code, keyword),
     fetchSinaNews(code, keyword),
     fetchCninfoAnnouncements(code),
-    fetchGubaOpinions(code)
+    fetchGubaOpinions(code),
+    fetchWechatMpOpinions(code, keyword)
   ]);
+  const opinions = [...wechatOpinions, ...gubaOpinions];
   const newsItems = [...eastmoneyNews, ...sinaNews, ...announcements]
     .filter((item, index, arr) => arr.findIndex((other) => other.title === item.title) === index)
     .slice(0, 12);
   const newsScore = averageScore(newsItems, 50);
   const announcementScore = averageScore(announcements, 50);
-  const communityScore = averageScore(opinions.map((item) => ({ score: item.score, sentiment: item.type })), 50);
+  const scoreOpinions = opinions.filter((item) => Number.isFinite(Number(item.score)));
+  const communityScore = averageScore(scoreOpinions.map((item) => ({ score: item.score, sentiment: item.type })), 50);
   const sentimentScore = Math.round(newsScore * 0.45 + announcementScore * 0.2 + communityScore * 0.35);
   const stock = await stockMeta(code);
   const moneyFlow = moneyFlowFromQuote(stock, sentimentScore);
@@ -1650,6 +1811,12 @@ async function route(req: Request) {
     const code = url.searchParams.get("stockCode") || "600000";
     const stock = await stockMeta(code);
     return send(await sentimentBundle(code, stock.name));
+  }
+  if (method === "GET" && path === "/ai/wechat/articles") {
+    return send((await storedWechatArticles()).slice(0, 50));
+  }
+  if (method === "POST" && path === "/ai/wechat/articles") {
+    return send(await saveWechatArticle(await jsonBody(req)), "微信公众号文章已导入");
   }
   if (method === "POST" && path === "/ai/analyze") {
     const data = await jsonBody(req);

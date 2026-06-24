@@ -54,6 +54,21 @@ export function getNewsFeed(params: { stockCode?: string; keyword?: string; cate
   return request.get('/ai/news', { params })
 }
 
+export function getWechatArticles() {
+  return request.get('/ai/wechat/articles')
+}
+
+export function importWechatArticle(data: {
+  title: string
+  content: string
+  url?: string
+  stockCodes?: string[]
+  keywords?: string[]
+  publishTime?: string
+}) {
+  return request.post('/ai/wechat/articles', data)
+}
+
 export function getAnalysisHistory() {
   return request.get('/ai/history')
 }

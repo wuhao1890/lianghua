@@ -284,6 +284,10 @@ export interface DaVOpinion {
   detail: string
   influence: number
   publishTime: string
+  source?: string
+  url?: string
+  verified?: boolean
+  needsAuth?: boolean
 }
 
 export interface DaVMajorityConsensus {
