@@ -44,6 +44,14 @@
           <template #title>新闻</template>
         </el-menu-item>
 
+        <el-sub-menu index="channel-group">
+          <template #title>
+            <el-icon><Connection /></el-icon>
+            <span>渠道</span>
+          </template>
+          <el-menu-item index="/channels/wechat">微信公众号</el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="ai-lab-group">
           <template #title>
             <el-icon><Monitor /></el-icon>
@@ -146,6 +154,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
+  Connection,
   DataAnalysis,
   Document,
   List,
@@ -169,12 +178,14 @@ const assetPaths = ['/gold', '/funds']
 const tradePaths = ['/trade', '/position', '/history', '/analysis']
 const userPaths = ['/dashboard', '/alert-settings', '/ai-agent']
 const aiLabPaths = ['/ai-lab', '/ai-lab/growth', '/ai-lab/research', '/ai-lab/portfolio']
+const channelPaths = ['/channels/wechat']
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/stock/')) return '/market'
   if (route.path.startsWith('/fund/')) return '/funds'
   if (stockPaths.includes(route.path)) return route.path
   if (assetPaths.includes(route.path)) return route.path
+  if (channelPaths.includes(route.path)) return route.path
   if (aiLabPaths.includes(route.path)) return route.path
   if (tradePaths.includes(route.path)) return route.path
   if (userPaths.includes(route.path)) return route.path

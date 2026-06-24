@@ -89,6 +89,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '新闻', icon: 'Document' }
       },
       {
+        path: 'channels/wechat',
+        name: 'WechatChannel',
+        component: () => import('@/views/WechatChannel.vue'),
+        meta: { title: '微信公众号', icon: 'Connection' }
+      },
+      {
         path: 'ai-lab',
         name: 'AiLab',
         component: () => import('@/views/AiLab.vue'),

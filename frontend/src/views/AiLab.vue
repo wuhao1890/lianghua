@@ -492,7 +492,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Delete, Plus, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { analyzeStock, getAiLabIterations, getAiLabState, saveAiLabIteration, saveAiLabState } from '@/api/ai'
+import { analyzeStock, getAiLabIterations, getAiLabState, getWechatLearning, saveAiLabIteration, saveAiLabState } from '@/api/ai'
 import { getRealtimeQuote, getSinaAStocks } from '@/api/stock'
 import { getGoldLatest } from '@/api/gold'
 import { getFundList } from '@/api/fund'
@@ -639,6 +639,7 @@ const customStrategies = ref<CustomStrategy[]>([])
 const portfolioPlan = ref<PortfolioPlan | null>(null)
 const researchFocuses = ref<ResearchFocus[]>([])
 const blacklistItems = ref<BlacklistItem[]>([])
+const channelLearning = ref<any>({})
 const LAB_STATE_STORAGE_KEY = 'lianghua_ai_lab_state'
 
 const customForm = reactive({
@@ -715,6 +716,12 @@ const currentDecision = computed(() => {
 })
 const learningInsights = computed(() => {
   const lessons = sortedExperiments.value.flatMap((item) => normalizeLessons(item.tradeLessons).map((lesson) => ({ asset: item.assetName, lesson }))).slice(0, 4)
+  const channelLessons = Array.isArray(channelLearning.value?.lessons)
+    ? channelLearning.value.lessons.slice(0, 3).map((item: any) => ({
+      title: `微信公众号：${item.title}`,
+      detail: `${item.lesson} ${item.labImpact}`
+    }))
+    : []
   const bucketText = activePortfolioPlan.value.buckets.map((bucket) => `${bucket.name}${bucket.ratio}%`).join('、')
   const insights = [
     { title: '组合结构', detail: `模型当前按 ${bucketText} 分配资金，先做组合前景判断，再决定是否买卖。` },
@@ -725,7 +732,7 @@ const learningInsights = computed(() => {
     title: `指定研究：${item.target || '全局方向'}`,
     detail: researchDirectionText(item)
   }))
-  return [...focusInsights, ...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 8)
+  return [...channelLessons, ...focusInsights, ...insights, ...lessons.map((item) => ({ title: `${item.asset}经验`, detail: zhText(item.lesson) }))].slice(0, 8)
 })
 const targetArchives = computed(() => sortedAssets.value.slice(0, 12).map((asset) => {
   const related = sortedExperiments.value.filter((item) => item.assetCode === asset.code)
@@ -759,6 +766,7 @@ const dataSources = computed(() => [
   { name: '股票', status: assets.value.some((item) => item.type === 'stock') ? '新浪行情 + 新闻/公告/股吧舆情' : '未选或暂无可用数据' },
   { name: '黄金', status: assets.value.some((item) => item.type === 'gold') ? '新浪公开贵金属报价' : '未选或暂无可用数据' },
   { name: '基金', status: assets.value.some((item) => item.type === 'fund') ? '东方财富/公开基金净值估算' : '未选或暂无可用数据' }
+  , { name: '微信公众号', status: channelLearning.value?.summary || '等待导入真实文章' }
 ])
 
 onMounted(async () => {
@@ -797,12 +805,14 @@ async function runAutoLab() {
 
 async function loadLabState() {
   try {
-    const [stateRes, iterationRes] = await Promise.all([
+    const [stateRes, iterationRes, channelRes] = await Promise.all([
       getAiLabState({ silentError: true }),
-      getAiLabIterations().catch(() => ({ data: { data: [] } }))
+      getAiLabIterations().catch(() => ({ data: { data: [] } })),
+      getWechatLearning().catch(() => ({ data: { data: {} } }))
     ])
     const state = stateRes.data?.data
     const iterations = Array.isArray(iterationRes.data?.data) ? iterationRes.data.data : []
+    channelLearning.value = channelRes.data?.data || {}
     applyIterationHistory(iterations)
     if (state) {
       applyLabState(state)

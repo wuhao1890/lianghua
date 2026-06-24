@@ -1254,6 +1254,7 @@ const WECHAT_WATCH_ACCOUNTS = [
   }
 ];
 const WECHAT_ARTICLES_KEY = "wechat-mp-articles";
+const WECHAT_RSS_CONFIG_KEY = "wechat-rss-config";
 
 function normalizeWechatArticles(raw: any): AnyRecord[] {
   const list = Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : Array.isArray(raw?.articles) ? raw.articles : [];
@@ -1304,6 +1305,127 @@ async function saveWechatArticle(data: AnyRecord) {
   return item;
 }
 
+function decodeXmlText(value = "") {
+  return cleanText(String(value)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'"));
+}
+
+function tagValue(xml: string, tag: string) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = xml.match(new RegExp(`<${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escaped}>`, "i"));
+  return decodeXmlText(match?.[1] || "");
+}
+
+function parseRssArticles(xml: string) {
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || xml.match(/<entry[\s\S]*?<\/entry>/gi) || [];
+  return blocks.map((block) => {
+    const title = tagValue(block, "title");
+    const linkFromTag = tagValue(block, "link");
+    const atomLink = block.match(/<link[^>]+href=["']([^"']+)["'][^>]*>/i)?.[1] || "";
+    const content = tagValue(block, "content:encoded") || tagValue(block, "content") || tagValue(block, "description") || tagValue(block, "summary");
+    return {
+      account: WECHAT_WATCH_ACCOUNTS[0].name,
+      source: "WeWe RSS",
+      title,
+      content,
+      url: linkFromTag || atomLink,
+      stockCodes: extractArticleCodes({ title, content }),
+      keywords: [],
+      publishTime: tagValue(block, "pubDate") || tagValue(block, "published") || tagValue(block, "updated") || new Date().toISOString(),
+      importedAt: new Date().toISOString()
+    };
+  }).filter((item) => item.title && item.content.length >= 20);
+}
+
+function normalizeWeweFeedUrl(feedUrl: string) {
+  const url = new URL(feedUrl);
+  url.pathname = url.pathname.replace(/\.(rss|atom)$/i, ".json");
+  if (!/\.(json)$/i.test(url.pathname)) url.pathname = `${url.pathname.replace(/\/$/, "")}.json`;
+  url.searchParams.set("mode", "fulltext");
+  url.searchParams.set("update", "true");
+  url.searchParams.set("limit", url.searchParams.get("limit") || "50");
+  return url.toString();
+}
+
+function parseWeweJsonFeed(raw: any) {
+  const items = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
+  return items.map((item: AnyRecord) => {
+    const title = cleanText(item.title || "");
+    const content = cleanText(item.content_html || item.content_text || item.summary || item.description || "");
+    return {
+      account: WECHAT_WATCH_ACCOUNTS[0].name,
+      source: "cooderl/wewe-rss",
+      title,
+      content,
+      url: item.url || item.external_url || item.id || "",
+      stockCodes: extractArticleCodes({ title, content }),
+      keywords: [],
+      publishTime: item.date_published || item.date_modified || new Date().toISOString(),
+      importedAt: new Date().toISOString()
+    };
+  }).filter((item) => item.title && item.content.length >= 20);
+}
+
+async function wechatRssConfig() {
+  const saved = await blobStore().get(WECHAT_RSS_CONFIG_KEY, { type: "json" }) || {};
+  return {
+    feedUrl: String(saved.feedUrl || currentEnv.WECHAT_MP_FEED_URL || ""),
+    account: saved.account || WECHAT_WATCH_ACCOUNTS[0].name,
+    updatedAt: saved.updatedAt || ""
+  };
+}
+
+async function saveWechatRssConfig(data: AnyRecord) {
+  const feedUrl = String(data.feedUrl || "").trim();
+  if (!/^https?:\/\//i.test(feedUrl)) throw new Error("请填写正确的 WeWe RSS 地址");
+  const config = {
+    feedUrl,
+    account: cleanText(data.account || WECHAT_WATCH_ACCOUNTS[0].name),
+    updatedAt: new Date().toISOString()
+  };
+  await blobStore().setJSON(WECHAT_RSS_CONFIG_KEY, config);
+  return config;
+}
+
+async function syncWechatRss() {
+  const config = await wechatRssConfig();
+  if (!config.feedUrl) throw new Error("请先配置 WeWe RSS 地址");
+  const feedUrl = normalizeWeweFeedUrl(config.feedUrl);
+  const response = await fetch(feedUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 lianghua-quant-channel",
+      "Accept": "application/feed+json, application/json, application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+    }
+  });
+  if (!response.ok) throw new Error(`WeWe RSS 同步失败：${response.status}`);
+  const text = await response.text();
+  let rssArticles: AnyRecord[] = [];
+  try {
+    rssArticles = parseWeweJsonFeed(JSON.parse(text));
+  } catch {
+    rssArticles = parseRssArticles(text);
+  }
+  rssArticles = rssArticles.map((item) => ({ ...item, account: config.account || item.account }));
+  if (!rssArticles.length) throw new Error("WeWe RSS 没有返回可识别的文章正文，请确认 FEED_MODE=fulltext 或使用 ?mode=fulltext");
+  const existing = await storedWechatArticles();
+  const merged = [...rssArticles, ...existing]
+    .filter((item, index, arr) => arr.findIndex((other) => (other.url && other.url === item.url) || other.title === item.title) === index)
+    .slice(0, 300);
+  await blobStore().setJSON(WECHAT_ARTICLES_KEY, merged);
+  return {
+    imported: rssArticles.length,
+    total: merged.length,
+    articles: rssArticles.slice(0, 20),
+    feedUrl,
+    syncedAt: new Date().toISOString()
+  };
+}
+
 async function storedWechatOpinions(code: string, keyword: string) {
   const opinions: AnyRecord[] = [];
   for (const article of await storedWechatArticles()) {
@@ -1328,6 +1450,69 @@ async function storedWechatOpinions(code: string, keyword: string) {
     if (opinions.length >= 5) break;
   }
   return opinions;
+}
+
+function pickWords(text: string, words: string[]) {
+  return words.filter((word) => text.includes(word)).slice(0, 8);
+}
+
+function extractArticleCodes(article: AnyRecord) {
+  const text = `${article.title || ""} ${article.content || ""} ${article.keywords || ""}`;
+  const fromText = Array.from(new Set((text.match(/\b(?:[036]\d{5}|688\d{3}|110\d{3}|159\d{3}|51\d{4})\b/g) || [])));
+  return Array.from(new Set([...normalizeCodes(article.stockCodes || article.codes), ...fromText])).slice(0, 20);
+}
+
+function makeWechatLearning(article: AnyRecord) {
+  const title = cleanText(article.title || "");
+  const content = cleanText(article.content || article.summary || article.digest || "");
+  const text = `${title} ${content}`;
+  const sentiment = sentimentFromText(text);
+  const opportunityWords = pickWords(text, ["低估", "修复", "反转", "增长", "景气", "突破", "回购", "分红", "业绩", "政策", "需求", "扩产", "创新"]);
+  const riskWords = pickWords(text, ["高估", "下跌", "亏损", "减持", "监管", "处罚", "退市", "回撤", "泡沫", "衰退", "风险", "暴跌", "利空"]);
+  const stockCodes = extractArticleCodes(article);
+  const tone = sentiment.sentiment === "bullish" ? "偏多" : sentiment.sentiment === "bearish" ? "偏空" : "中性";
+  return {
+    id: article.id || `${title}-${article.importedAt || article.publishTime || ""}`,
+    channel: "微信公众号",
+    account: article.account || WECHAT_WATCH_ACCOUNTS[0].name,
+    title,
+    url: article.url || "",
+    stockCodes,
+    keywords: normalizeCodes(article.keywords || article.relatedKeywords),
+    sentiment: sentiment.sentiment,
+    sentimentText: tone,
+    score: sentiment.score,
+    reason: sentiment.reason,
+    opportunityWords,
+    riskWords,
+    excerpt: content.slice(0, 180),
+    lesson: `从《${title}》学习到：该渠道观点当前${tone}，需要把${opportunityWords[0] || "机会"}和${riskWords[0] || "风险"}同时纳入策略评分。`,
+    labImpact: stockCodes.length
+      ? `影响标的 ${stockCodes.join("、")}：AI实验室会把该文章作为新闻舆情和大V影响力证据。`
+      : "暂未识别到明确代码：AI实验室只把它作为行业/情绪背景，不直接触发买卖。",
+    publishTime: article.publishTime || article.importedAt || new Date().toISOString(),
+    learnedAt: new Date().toISOString()
+  };
+}
+
+async function wechatLearningReport() {
+  const articles = await storedWechatArticles();
+  const lessons = articles.map(makeWechatLearning);
+  const relatedCodes = Array.from(new Set(lessons.flatMap((item) => item.stockCodes || []))).slice(0, 30);
+  const bullish = lessons.filter((item) => item.sentiment === "bullish").length;
+  const bearish = lessons.filter((item) => item.sentiment === "bearish").length;
+  const neutral = lessons.length - bullish - bearish;
+  return {
+    channel: "微信公众号",
+    account: WECHAT_WATCH_ACCOUNTS[0].name,
+    sourceStatus: lessons.length ? "已导入真实文章" : "等待导入真实文章",
+    total: lessons.length,
+    relatedCodes,
+    summary: lessons.length
+      ? `已保存 ${lessons.length} 篇真实文章，识别 ${relatedCodes.length} 个关联标的；偏多 ${bullish} 篇，偏空 ${bearish} 篇，中性 ${neutral} 篇。`
+      : "还没有可学习的真实文章。请从桌面微信打开嘟嘟地瓜文章，复制标题、正文和链接后导入。",
+    lessons
+  };
 }
 
 function wechatUnavailableOpinions() {
@@ -1814,6 +1999,18 @@ async function route(req: Request) {
   }
   if (method === "GET" && path === "/ai/wechat/articles") {
     return send((await storedWechatArticles()).slice(0, 50));
+  }
+  if (method === "GET" && path === "/ai/wechat/learning") {
+    return send(await wechatLearningReport());
+  }
+  if (method === "GET" && path === "/ai/wechat/rss-config") {
+    return send(await wechatRssConfig());
+  }
+  if (method === "POST" && path === "/ai/wechat/rss-config") {
+    return send(await saveWechatRssConfig(await jsonBody(req)), "WeWe RSS配置已保存");
+  }
+  if (method === "POST" && path === "/ai/wechat/sync") {
+    return send(await syncWechatRss(), "WeWe RSS同步完成");
   }
   if (method === "POST" && path === "/ai/wechat/articles") {
     return send(await saveWechatArticle(await jsonBody(req)), "微信公众号文章已导入");
