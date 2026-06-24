@@ -714,7 +714,7 @@ const currentDecision = computed(() => {
   }
 })
 const learningInsights = computed(() => {
-  const lessons = sortedExperiments.value.flatMap((item) => (item.tradeLessons || []).map((lesson) => ({ asset: item.assetName, lesson }))).slice(0, 4)
+  const lessons = sortedExperiments.value.flatMap((item) => normalizeLessons(item.tradeLessons).map((lesson) => ({ asset: item.assetName, lesson }))).slice(0, 4)
   const bucketText = activePortfolioPlan.value.buckets.map((bucket) => `${bucket.name}${bucket.ratio}%`).join('、')
   const insights = [
     { title: '组合结构', detail: `模型当前按 ${bucketText} 分配资金，先做组合前景判断，再决定是否买卖。` },
@@ -1947,7 +1947,7 @@ function applyTradeExperience(item: LabExperiment, trade: SimulatedTrade, closeR
   const holdingGenerations = Number(trade.holdingGenerations || 0)
   const resultText = profit > 0 ? '盈利' : profit < 0 ? '亏损' : '持平'
   const summary = `${resultText}经验：持有${holdingGenerations}代，收益率${formatPercent(floatingPct)}，卖出原因：${closeReason}。`
-  item.tradeLessons = [summary, ...(item.tradeLessons || [])].slice(0, 5)
+  item.tradeLessons = [summary, ...normalizeLessons(item.tradeLessons)].slice(0, 5)
   item.lastTradeResult = summary
   if (profit > 0) {
     item.winRate = Math.min(100, item.winRate + 1)
@@ -1966,10 +1966,17 @@ function tradeProfitFor(trade: SimulatedTrade) {
 }
 
 function strategyMemoryFor(item: LabExperiment) {
-  const lessons = item.tradeLessons || []
+  const lessons = normalizeLessons(item.tradeLessons)
   if (lessons.length) return lessons.map(zhText).join(' ')
   const cycle = holdingPeriodFor(item)
   return `${item.assetName} 正在建立标的记忆：当前采用${cycle.label}，结合历史曲线、实时行情、新闻舆情、资金流和技术面持续学习。`
+}
+
+function normalizeLessons(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean)
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : []
+  if (value && typeof value === 'object') return Object.values(value).map((item) => String(item || '').trim()).filter(Boolean)
+  return []
 }
 
 function zhText(value?: string) {
