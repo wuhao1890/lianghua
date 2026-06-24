@@ -54,24 +54,28 @@ export function getNewsFeed(params: { stockCode?: string; keyword?: string; cate
   return request.get('/ai/news', { params })
 }
 
-export function getWechatArticles() {
-  return request.get('/ai/wechat/articles')
+export function getWechatArticles(options: { silentError?: boolean } = {}) {
+  return request.get('/ai/wechat/articles', { silentError: options.silentError } as any)
 }
 
-export function getWechatLearning() {
-  return request.get('/ai/wechat/learning')
+export function getWechatLearning(options: { silentError?: boolean } = {}) {
+  return request.get('/ai/wechat/learning', { silentError: options.silentError } as any)
 }
 
-export function getWechatRssConfig() {
-  return request.get('/ai/wechat/rss-config')
+export function getWechatRssConfig(options: { silentError?: boolean } = {}) {
+  return request.get('/ai/wechat/rss-config', { silentError: options.silentError } as any)
 }
 
-export function saveWechatRssConfig(data: { feedUrl: string; account?: string }) {
+export function saveWechatRssConfig(data: any) {
   return request.post('/ai/wechat/rss-config', data)
 }
 
-export function syncWechatRss() {
-  return request.post('/ai/wechat/sync')
+export function syncWechatRss(options: { silentError?: boolean } = {}) {
+  return request.post('/ai/wechat/sync', undefined, { silentError: options.silentError } as any)
+}
+
+export function subscribeWechatSource(data?: any, options: { silentError?: boolean } = {}) {
+  return request.post('/ai/wechat/subscribe', data || {}, { silentError: options.silentError } as any)
 }
 
 export function importWechatArticle(data: {

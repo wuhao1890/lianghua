@@ -10,6 +10,10 @@ type PagesEnv = {
   LIANGHUA_SYNC_TOKEN?: string;
   WECHAT_MP_FEED_URL?: string;
   WECHAT_MP_FEED_TOKEN?: string;
+  WEWE_RSS_BASE_URL?: string;
+  WEWE_RSS_AUTH_CODE?: string;
+  DUDUDIGUA_SHARE_LINK?: string;
+  WECHAT_SYNC_INTERVAL_MINUTES?: string;
   HUABAO_API_BASE?: string;
   HUABAO_CLIENT_ID?: string;
   HUABAO_ACCOUNT_ID?: string;
@@ -1245,14 +1249,21 @@ async function fetchGubaOpinions(code: string) {
   }
 }
 
-const WECHAT_WATCH_ACCOUNTS = [
+const WECHAT_DEFAULT_SOURCES = [
   {
+    id: "dududigua",
     name: "嘟嘟地瓜",
     source: "微信公众号",
     influence: 8,
-    seedUrl: "https://mp.weixin.qq.com/s?__biz=MzYyMzMzNDAzMA==&mid=2247484400&idx=1&sn=9b6b8652ce4b09823eb921a85bcb2e31"
+    shareLink: "https://mp.weixin.qq.com/s/j_eNtoE8lD1ph3GNkyc16A?scene=1"
   }
 ];
+const WECHAT_WATCH_ACCOUNTS = WECHAT_DEFAULT_SOURCES.map((item) => ({
+  name: item.name,
+  source: item.source,
+  influence: item.influence,
+  seedUrl: item.shareLink
+}));
 const WECHAT_ARTICLES_KEY = "wechat-mp-articles";
 const WECHAT_RSS_CONFIG_KEY = "wechat-rss-config";
 
@@ -1371,59 +1382,299 @@ function parseWeweJsonFeed(raw: any) {
   }).filter((item) => item.title && item.content.length >= 20);
 }
 
+function normalizeWechatSource(source: AnyRecord = {}, index = 0) {
+  const fallback = WECHAT_DEFAULT_SOURCES[index] || {};
+  const name = cleanText(source.name || source.account || fallback.name || `公众号${index + 1}`);
+  const feedUrl = String(source.feedUrl || "").trim();
+  const shareLink = String(source.shareLink || source.seedUrl || fallback.shareLink || "").trim();
+  return {
+    id: String(source.id || source.feedId || fallback.id || name || `wechat-${index + 1}`).replace(/[^\w-]/g, "-"),
+    name,
+    source: cleanText(source.source || fallback.source || "微信公众号"),
+    influence: Number(source.influence || fallback.influence || 6),
+    shareLink,
+    feedId: String(source.feedId || "").trim(),
+    feedUrl,
+    enabled: source.enabled !== false,
+    status: cleanText(source.status || (feedUrl ? "已订阅" : "待订阅")),
+    lastSyncedAt: source.lastSyncedAt || "",
+    lastError: cleanText(source.lastError || ""),
+    updatedAt: source.updatedAt || ""
+  };
+}
+
+function normalizeWechatSources(saved: AnyRecord) {
+  const legacy = saved.feedUrl || saved.feedId || saved.shareLink || saved.account
+    ? [{
+        id: saved.feedId || "dududigua",
+        name: saved.account || WECHAT_DEFAULT_SOURCES[0].name,
+        source: "微信公众号",
+        influence: WECHAT_DEFAULT_SOURCES[0].influence,
+        shareLink: saved.shareLink || currentEnv.DUDUDIGUA_SHARE_LINK || WECHAT_DEFAULT_SOURCES[0].shareLink,
+        feedId: saved.feedId || "",
+        feedUrl: saved.feedUrl || "",
+        enabled: true,
+        status: saved.feedUrl ? "已订阅" : "待订阅",
+        lastSyncedAt: saved.lastSyncAt || saved.updatedAt || "",
+        lastError: ""
+      }]
+    : [];
+  const rawSources = Array.isArray(saved.sources) && saved.sources.length ? saved.sources : legacy;
+  const sources = rawSources.length ? rawSources : WECHAT_DEFAULT_SOURCES.map((item) => ({
+    ...item,
+    shareLink: item.id === "dududigua" ? currentEnv.DUDUDIGUA_SHARE_LINK || item.shareLink : item.shareLink
+  }));
+  return sources.map(normalizeWechatSource);
+}
+
 async function wechatRssConfig() {
   const saved = await blobStore().get(WECHAT_RSS_CONFIG_KEY, { type: "json" }) || {};
+  const sources = normalizeWechatSources(saved);
+  const first = sources[0] || normalizeWechatSource(WECHAT_DEFAULT_SOURCES[0]);
   return {
-    feedUrl: String(saved.feedUrl || currentEnv.WECHAT_MP_FEED_URL || ""),
-    account: saved.account || WECHAT_WATCH_ACCOUNTS[0].name,
+    baseUrl: String(saved.baseUrl || currentEnv.WEWE_RSS_BASE_URL || "http://127.0.0.1:4000").trim().replace(/\/$/, ""),
+    authCode: String(saved.authCode || currentEnv.WEWE_RSS_AUTH_CODE || "123567").trim(),
+    syncIntervalMinutes: Math.max(1, Number(saved.syncIntervalMinutes || currentEnv.WECHAT_SYNC_INTERVAL_MINUTES || 5)),
+    sources,
+    feedUrl: first.feedUrl || "",
+    account: first.name || WECHAT_DEFAULT_SOURCES[0].name,
+    shareLink: first.shareLink || currentEnv.DUDUDIGUA_SHARE_LINK || WECHAT_DEFAULT_SOURCES[0].shareLink,
+    feedId: first.feedId || "",
+    lastAutoSyncAt: saved.lastAutoSyncAt || "",
+    lastSyncAt: saved.lastSyncAt || "",
+    lastSyncStatus: saved.lastSyncStatus || "",
+    lastSyncError: saved.lastSyncError || "",
     updatedAt: saved.updatedAt || ""
   };
 }
 
 async function saveWechatRssConfig(data: AnyRecord) {
-  const feedUrl = String(data.feedUrl || "").trim();
-  if (!/^https?:\/\//i.test(feedUrl)) throw new Error("请填写正确的 WeWe RSS 地址");
+  const previous = await wechatRssConfig();
+  const baseUrl = String(data.baseUrl || previous.baseUrl || currentEnv.WEWE_RSS_BASE_URL || "http://127.0.0.1:4000").trim().replace(/\/$/, "");
+  const authCode = String(data.authCode || previous.authCode || currentEnv.WEWE_RSS_AUTH_CODE || "123567").trim();
+  const rawSources = Array.isArray(data.sources) ? data.sources : data.source ? [data.source] : previous.sources;
+  const sources = rawSources.map((source: AnyRecord, index: number) => normalizeWechatSource({
+    ...source,
+    shareLink: source.shareLink || (index === 0 ? data.shareLink : ""),
+    feedUrl: source.feedUrl || (index === 0 ? data.feedUrl : ""),
+    feedId: source.feedId || (index === 0 ? data.feedId : "")
+  }, index));
+  for (const source of sources) {
+    if (source.feedUrl && !/^https?:\/\//i.test(source.feedUrl)) throw new Error(`请填写正确的 WeWe RSS 地址：${source.name}`);
+  }
   const config = {
-    feedUrl,
-    account: cleanText(data.account || WECHAT_WATCH_ACCOUNTS[0].name),
+    ...previous,
+    baseUrl,
+    authCode,
+    syncIntervalMinutes: Math.max(1, Number(data.syncIntervalMinutes || previous.syncIntervalMinutes || 5)),
+    sources,
+    feedUrl: sources[0]?.feedUrl || "",
+    account: sources[0]?.name || "",
+    shareLink: sources[0]?.shareLink || "",
+    feedId: sources[0]?.feedId || "",
+    lastAutoSyncAt: data.lastAutoSyncAt || previous.lastAutoSyncAt || "",
+    lastSyncAt: data.lastSyncAt || previous.lastSyncAt || "",
+    lastSyncStatus: data.lastSyncStatus || previous.lastSyncStatus || "",
+    lastSyncError: data.lastSyncError || "",
     updatedAt: new Date().toISOString()
   };
   await blobStore().setJSON(WECHAT_RSS_CONFIG_KEY, config);
   return config;
 }
 
-async function syncWechatRss() {
-  const config = await wechatRssConfig();
-  if (!config.feedUrl) throw new Error("请先配置 WeWe RSS 地址");
-  const feedUrl = normalizeWeweFeedUrl(config.feedUrl);
-  const response = await fetch(feedUrl, {
+async function callWeweTrpc(baseUrl: string, authCode: string, path: string, input: AnyRecord) {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/trpc/${path}`, {
+    method: "POST",
     headers: {
-      "User-Agent": "Mozilla/5.0 lianghua-quant-channel",
-      "Accept": "application/feed+json, application/json, application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
-    }
+      "content-type": "application/json",
+      "authorization": authCode
+    },
+    body: JSON.stringify({ json: input })
   });
-  if (!response.ok) throw new Error(`WeWe RSS 同步失败：${response.status}`);
   const text = await response.text();
-  let rssArticles: AnyRecord[] = [];
+  let payload: any = null;
   try {
-    rssArticles = parseWeweJsonFeed(JSON.parse(text));
+    payload = JSON.parse(text);
   } catch {
-    rssArticles = parseRssArticles(text);
+    throw new Error(`WeWe RSS返回不可解析：${text.slice(0, 120)}`);
   }
-  rssArticles = rssArticles.map((item) => ({ ...item, account: config.account || item.account }));
-  if (!rssArticles.length) throw new Error("WeWe RSS 没有返回可识别的文章正文，请确认 FEED_MODE=fulltext 或使用 ?mode=fulltext");
+  if (!response.ok || payload?.error) {
+    throw new Error(payload?.error?.message || `WeWe RSS请求失败：${response.status}`);
+  }
+  return payload?.result?.data?.json ?? payload?.result?.data ?? payload;
+}
+
+function feedUrlFor(baseUrl: string, feedId: string) {
+  const url = new URL(`/feeds/${feedId}.json`, baseUrl.replace(/\/$/, ""));
+  url.searchParams.set("mode", "fulltext");
+  url.searchParams.set("update", "true");
+  url.searchParams.set("limit", "50");
+  return url.toString();
+}
+
+async function subscribeWechatSource(data: AnyRecord = {}) {
+  const previous = await wechatRssConfig();
+  const requestedId = String(data.id || data.sourceId || "").trim();
+  const requestedName = cleanText(data.name || data.account || "");
+  const requestedShareLink = String(data.shareLink || data.seedUrl || "").trim();
+  const foundIndex = requestedId
+    ? previous.sources.findIndex((item: AnyRecord) => item.id === requestedId)
+    : previous.sources.findIndex((item: AnyRecord) => {
+        const sameLink = requestedShareLink && item.shareLink === requestedShareLink;
+        const sameName = requestedName && item.name === requestedName;
+        return sameLink || sameName;
+      });
+  const targetIndex = foundIndex >= 0 ? foundIndex : previous.sources.length;
+  const sourceId = requestedId || previous.sources[targetIndex]?.id || `wechat-${Date.now()}`;
+  const sources = [...previous.sources];
+  const target = normalizeWechatSource({
+    ...(sources[targetIndex] || WECHAT_DEFAULT_SOURCES[targetIndex] || {}),
+    ...data,
+    id: sourceId
+  }, targetIndex);
+  if (!target.shareLink || !/^https:\/\/mp\.weixin\.qq\.com\/s\//i.test(target.shareLink)) {
+    throw new Error(`需要“${target.name}”任意一篇文章的微信分享链接，格式必须是 https://mp.weixin.qq.com/s/...。`);
+  }
+  const mpList = await callWeweTrpc(previous.baseUrl, previous.authCode, "platform.getMpInfo", { wxsLink: target.shareLink });
+  const item = Array.isArray(mpList) ? mpList[0] : mpList;
+  if (!item?.id) throw new Error(`WeWe RSS没有识别到公众号，请确认分享链接来自“${target.name}”公众号文章。`);
+  await callWeweTrpc(previous.baseUrl, previous.authCode, "feed.add", {
+    id: item.id,
+    mpName: item.name || target.name,
+    mpCover: item.cover || "",
+    mpIntro: item.intro || "",
+    updateTime: Number(item.updateTime || Math.floor(Date.now() / 1000)),
+    status: 1
+  });
+  await callWeweTrpc(previous.baseUrl, previous.authCode, "feed.refreshArticles", { mpId: item.id });
+  sources[targetIndex] = {
+    ...target,
+    feedId: item.id,
+    name: item.name || target.name,
+    feedUrl: feedUrlFor(previous.baseUrl, item.id),
+    status: "已订阅",
+    lastError: "",
+    updatedAt: new Date().toISOString()
+  };
+  const next = await saveWechatRssConfig({ ...previous, sources });
+  return {
+    feed: item,
+    source: sources[targetIndex],
+    config: next
+  };
+}
+
+async function syncWechatRss(options: AnyRecord = {}) {
+  const config = await wechatRssConfig();
+  const enabledSources = config.sources.filter((source: AnyRecord) => source.enabled);
+  if (!enabledSources.length) throw new Error("请先添加微信公众号订阅源");
+  const syncedSources: AnyRecord[] = [];
+  const failedSources: AnyRecord[] = [];
+  let allArticles: AnyRecord[] = [];
+  const nextSources = [...config.sources];
+  for (const source of enabledSources) {
+    const index = nextSources.findIndex((item: AnyRecord) => item.id === source.id);
+    let currentSource = source;
+    try {
+      if (!currentSource.feedUrl && currentSource.shareLink) {
+        const result = await subscribeWechatSource({ ...currentSource, sourceId: currentSource.id });
+        currentSource = result.source;
+      }
+      if (!currentSource.feedUrl) throw new Error(`公众号“${currentSource.name}”还没有 WeWe RSS 订阅地址`);
+      const feedUrl = normalizeWeweFeedUrl(currentSource.feedUrl);
+      const response = await fetch(feedUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 lianghua-quant-channel",
+          "Accept": "application/feed+json, application/json, application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+        }
+      });
+      if (!response.ok) throw new Error(`WeWe RSS 同步失败：${response.status}`);
+      const text = await response.text();
+      let rssArticles: AnyRecord[] = [];
+      try {
+        rssArticles = parseWeweJsonFeed(JSON.parse(text));
+      } catch {
+        rssArticles = parseRssArticles(text);
+      }
+      rssArticles = rssArticles.map((item) => ({
+        ...item,
+        account: currentSource.name || item.account,
+        source: currentSource.source || item.source,
+        channelSourceId: currentSource.id
+      }));
+      if (!rssArticles.length) throw new Error("WeWe RSS 没有返回可识别的文章正文，请确认 FEED_MODE=fulltext 或使用 ?mode=fulltext");
+      allArticles = [...allArticles, ...rssArticles];
+      const savedSource = {
+        ...currentSource,
+        status: "同步成功",
+        lastSyncedAt: new Date().toISOString(),
+        lastError: ""
+      };
+      if (index >= 0) nextSources[index] = savedSource;
+      syncedSources.push({ ...savedSource, imported: rssArticles.length, feedUrl });
+    } catch (error: any) {
+      const savedSource = {
+        ...currentSource,
+        status: "同步失败",
+        lastError: cleanText(error?.message || "同步失败"),
+        lastSyncedAt: currentSource.lastSyncedAt || ""
+      };
+      if (index >= 0) nextSources[index] = savedSource;
+      failedSources.push(savedSource);
+    }
+  }
+  if (!allArticles.length && failedSources.length) {
+    const firstError = failedSources[0]?.lastError || "同步失败";
+    await saveWechatRssConfig({
+      ...config,
+      sources: nextSources,
+      lastAutoSyncAt: options.auto ? new Date().toISOString() : config.lastAutoSyncAt,
+      lastSyncStatus: "同步失败",
+      lastSyncError: firstError,
+      lastSyncAt: new Date().toISOString()
+    });
+    throw new Error(firstError);
+  }
   const existing = await storedWechatArticles();
-  const merged = [...rssArticles, ...existing]
+  const merged = [...allArticles, ...existing]
     .filter((item, index, arr) => arr.findIndex((other) => (other.url && other.url === item.url) || other.title === item.title) === index)
     .slice(0, 300);
   await blobStore().setJSON(WECHAT_ARTICLES_KEY, merged);
+  await saveWechatRssConfig({
+    ...config,
+    sources: nextSources,
+    lastAutoSyncAt: options.auto ? new Date().toISOString() : config.lastAutoSyncAt,
+    lastSyncStatus: failedSources.length ? "部分失败" : "同步成功",
+    lastSyncError: failedSources.map((item) => `${item.name}：${item.lastError}`).join("；"),
+    lastSyncAt: new Date().toISOString()
+  });
   return {
-    imported: rssArticles.length,
+    imported: allArticles.length,
     total: merged.length,
-    articles: rssArticles.slice(0, 20),
-    feedUrl,
-    syncedAt: new Date().toISOString()
+    articles: allArticles.slice(0, 20),
+    sources: syncedSources,
+    failedSources,
+    syncedAt: new Date().toISOString(),
+    status: failedSources.length ? "部分失败" : "同步成功"
   };
+}
+
+async function autoSyncWechatIfDue() {
+  const config = await wechatRssConfig();
+  const last = config.lastAutoSyncAt || config.lastSyncAt || "";
+  const intervalMs = Math.max(1, Number(config.syncIntervalMinutes || 5)) * 60 * 1000;
+  if (last && Date.now() - new Date(last).getTime() < intervalMs) return { skipped: true, reason: "未到自动同步间隔", config };
+  try {
+    return await syncWechatRss({ auto: true });
+  } catch (error: any) {
+    await saveWechatRssConfig({
+      ...config,
+      lastAutoSyncAt: new Date().toISOString(),
+      lastSyncStatus: "自动同步失败",
+      lastSyncError: cleanText(error?.message || "自动同步失败")
+    });
+    return { skipped: false, failed: true, error: cleanText(error?.message || "自动同步失败") };
+  }
 }
 
 async function storedWechatOpinions(code: string, keyword: string) {
@@ -1431,18 +1682,18 @@ async function storedWechatOpinions(code: string, keyword: string) {
   for (const article of await storedWechatArticles()) {
     const account = String(article.account || article.author || article.source || "").trim();
     const watched = WECHAT_WATCH_ACCOUNTS.find((item) => account.includes(item.name));
-    if (!watched || !articleMatchesStock(article, code, keyword)) continue;
+    if (!articleMatchesStock(article, code, keyword)) continue;
     const title = cleanText(article.title || "");
     const content = cleanText(article.content || article.summary || article.digest || "");
     const sentiment = sentimentFromText(`${title} ${content}`);
     opinions.push({
-      name: `${watched.name}（微信公众号）`,
+      name: `${watched?.name || account || "微信公众号"}（微信公众号）`,
       type: sentiment.sentiment,
       view: title,
       detail: `已导入微信公众号真实文章解析：${sentiment.reason}`,
-      influence: watched.influence,
+      influence: watched?.influence || 6,
       publishTime: article.publishTime || article.importedAt || new Date().toISOString(),
-      source: watched.source,
+      source: watched?.source || "微信公众号",
       url: article.url || "",
       score: sentiment.score,
       verified: true
@@ -1496,6 +1747,7 @@ function makeWechatLearning(article: AnyRecord) {
 }
 
 async function wechatLearningReport() {
+  const config = await wechatRssConfig();
   const articles = await storedWechatArticles();
   const lessons = articles.map(makeWechatLearning);
   const relatedCodes = Array.from(new Set(lessons.flatMap((item) => item.stockCodes || []))).slice(0, 30);
@@ -1504,13 +1756,17 @@ async function wechatLearningReport() {
   const neutral = lessons.length - bullish - bearish;
   return {
     channel: "微信公众号",
-    account: WECHAT_WATCH_ACCOUNTS[0].name,
-    sourceStatus: lessons.length ? "已导入真实文章" : "等待导入真实文章",
+    account: config.sources.map((item: AnyRecord) => item.name).join("、"),
+    sourceStatus: config.lastSyncStatus || (lessons.length ? "已导入真实文章" : "等待自动同步"),
     total: lessons.length,
     relatedCodes,
+    sources: config.sources,
+    lastSyncAt: config.lastSyncAt,
+    lastAutoSyncAt: config.lastAutoSyncAt,
+    lastSyncError: config.lastSyncError,
     summary: lessons.length
-      ? `已保存 ${lessons.length} 篇真实文章，识别 ${relatedCodes.length} 个关联标的；偏多 ${bullish} 篇，偏空 ${bearish} 篇，中性 ${neutral} 篇。`
-      : "还没有可学习的真实文章。请从桌面微信打开嘟嘟地瓜文章，复制标题、正文和链接后导入。",
+      ? `已保存 ${lessons.length} 篇真实文章，覆盖 ${config.sources.length} 个公众号，识别 ${relatedCodes.length} 个关联标的；偏多 ${bullish} 篇，偏空 ${bearish} 篇，中性 ${neutral} 篇。`
+      : (config.lastSyncError ? `还没有可学习的真实文章；最近同步失败：${config.lastSyncError}` : "还没有可学习的真实文章，系统会按同步间隔自动尝试读取已订阅公众号。"),
     lessons
   };
 }
@@ -1998,9 +2254,11 @@ async function route(req: Request) {
     return send(await sentimentBundle(code, stock.name));
   }
   if (method === "GET" && path === "/ai/wechat/articles") {
+    await autoSyncWechatIfDue();
     return send((await storedWechatArticles()).slice(0, 50));
   }
   if (method === "GET" && path === "/ai/wechat/learning") {
+    await autoSyncWechatIfDue();
     return send(await wechatLearningReport());
   }
   if (method === "GET" && path === "/ai/wechat/rss-config") {
@@ -2008,6 +2266,12 @@ async function route(req: Request) {
   }
   if (method === "POST" && path === "/ai/wechat/rss-config") {
     return send(await saveWechatRssConfig(await jsonBody(req)), "WeWe RSS配置已保存");
+  }
+  if (method === "POST" && path === "/ai/wechat/subscribe") {
+    return send(await subscribeWechatSource(await jsonBody(req)), "公众号订阅完成");
+  }
+  if (method === "POST" && path === "/ai/wechat/subscribe-dududigua") {
+    return send(await subscribeWechatSource({ ...(await jsonBody(req)), sourceId: "dududigua" }), "公众号订阅完成");
   }
   if (method === "POST" && path === "/ai/wechat/sync") {
     return send(await syncWechatRss(), "WeWe RSS同步完成");
